@@ -1,0 +1,22 @@
+Karma Debian package
+====================
+
+This repository contains the Debian packaging for Karma
+(https://github.com/prymitive/karma).
+
+Upstream code is (re)tagged as upstream/<version> from upstream v<version> tags
+and Debian commits are made to the "master" branch.
+
+New upstream version
+====================
+
+  git remote add upstream https://github.com/prymitive/karma
+  git fetch upstream
+  git checkout v<version>
+  git tag upstream/<version>
+
+  git checkout master
+  git merge upstream/<version>
+  dch -v<version>-1
+
+The resulting repository should be buildable via usual means (e.g. pdebuild).

@@ -1,0 +1,36 @@
+Description: Fix build and version
+Author: Filippo Giunchedi <fgiunchedi@wikimedia.org>
+
+---
+The information above should follow the Patch Tagging Guidelines, please
+checkout http://dep.debian.net/deps/dep3/ to learn about the format. Here
+are templates for supplementary fields that you might want to add:
+
+Origin: <vendor|upstream|other>, <url of original patch>
+Bug: <url in upstream bugtracker>
+Bug-Debian: https://bugs.debian.org/<bugnumber>
+Bug-Ubuntu: https://launchpad.net/bugs/<bugnumber>
+Forwarded: <no|not-needed|url proving that it has been forwarded>
+Reviewed-By: <name and email of someone who approved the patch>
+Last-Update: 2020-08-06
+
+--- karma-0.68.orig/make/vars.mk
++++ karma-0.68/make/vars.mk
+@@ -1,5 +1,5 @@
+ NAME    := karma
+-VERSION ?= $(shell git describe --tags --always --dirty='-dev')
++VERSION ?= $(shell dpkg-parsechangelog -SVersion)
+ 
+ # define a recursive wildcard function, we'll need it to find deeply nested
+ # sources in the ui directory
+--- karma-0.68.orig/ui/Makefile
++++ karma-0.68/ui/Makefile
+@@ -4,7 +4,7 @@
+ rwildcard = $(foreach d, $(wildcard $1*), $(call rwildcard,$d/,$2) $(filter $(subst *,%,$2),$d))
+ 
+ node_modules/%: package.json package-lock.json
+-	npm install
++	npm install --no-audit
+ 	touch $@
+ 
+ build/index.html: node_modules/react-scripts/bin/react-scripts.js $(call rwildcard, public src, *)

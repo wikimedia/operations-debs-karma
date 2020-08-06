@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE=1
+export HOME=/tmp/karma
+export GOPATH=/tmp/karma/go
+
+%:
+	dh $@ --with=systemd
+
+override_dh_auto_install:
+	install -D -m 755 -o root -g root karma debian/karma/usr/bin/karma
+	install -D -m 644 -o root -g root debian/karma.sysusers debian/karma/usr/lib/sysusers.d/karma.conf

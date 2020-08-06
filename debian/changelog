@@ -1,0 +1,5 @@
+karma (0.68-1) buster-wikimedia; urgency=medium
+
+  * Debian packaging
+
+ -- Filippo Giunchedi <fgiunchedi@wikimedia.org>  Thu, 06 Aug 2020 15:51:36 +0200

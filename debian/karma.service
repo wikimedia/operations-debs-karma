@@ -1,0 +1,11 @@
+[Unit]
+Description=Alert dashboard for Prometheus Alertmanager
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=karma
+ExecStart=/usr/bin/karma --alertmanager.uri localhost:9093 --listen.address localhost:19194
+
+[Install]
+WantedBy=multi-user.target
