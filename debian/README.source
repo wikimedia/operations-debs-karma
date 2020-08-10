@@ -19,7 +19,11 @@ New upstream version
   git merge upstream/<version>
   dch -v<version>-1
 
-The resulting repository should be buildable via usual means (e.g. pdebuild).
+The resulting repository should be buildable via usual means, for example from
+deneb.codfw.wmnet:
+
+  https_proxy=http://webproxy.codfw.wmnet:8080 DIST=sid pdebuild
+
 Once happy you can push/review to origin both the branch and the upstream tags.
 
   git push origin
