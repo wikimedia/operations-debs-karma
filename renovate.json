@@ -1,0 +1,19 @@
+{
+  "extends": ["config:base"],
+  "prHourlyLimit": 1,
+  "rebaseStalePrs": false,
+  "travis": { "enabled": true },
+  "masterIssue": true,
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "excludePackageNames": ["node"],
+      "automerge": true
+    },
+    {
+      "packageNames": ["node"],
+      "updateTypes": ["minor", "patch"],
+      "automerge": true
+    }
+  ]
+}

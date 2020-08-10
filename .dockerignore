@@ -1,0 +1,5 @@
+karma
+ui/build
+ui/coverage
+ui/node_modules
+Dockerfile

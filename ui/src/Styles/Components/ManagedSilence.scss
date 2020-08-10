@@ -1,0 +1,30 @@
+.components-managed-silence {
+  &.card,
+  & > .card-header,
+  & > .card-body {
+    background-color: $silence-bg;
+  }
+
+  &.card {
+    border-left-width: 3px;
+    border-left-color: $silence-border;
+  }
+}
+
+.components-managed-silence-icon {
+  height: 1.4rem;
+}
+
+.components-managed-silence-comment {
+  line-height: 1.4rem;
+  color: $silence-comment-color;
+}
+
+.components-managed-silence-cite {
+  font-size: 85%;
+}
+
+// negative margin used for silence expiry badges with progress
+.nmb-05 {
+  margin-bottom: -($spacer * 0.125) !important;
+}

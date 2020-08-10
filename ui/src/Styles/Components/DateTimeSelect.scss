@@ -1,0 +1,70 @@
+.components-date-range.DayPicker {
+  .DayPicker-wrapper:focus,
+  .DayPicker-NavButton:focus {
+    outline: none;
+  }
+
+  .DayPicker-Weekday {
+    font-weight: 600;
+  }
+
+  .DayPicker-Month {
+    border-collapse: inherit;
+    border-spacing: 0 1px;
+  }
+
+  .DayPicker-Day {
+    &:focus {
+      outline: none;
+    }
+
+    &:not(.DayPicker-Day--disabled):not(.DayPicker-Day--outside):not(.DayPicker-Day--selected):hover {
+      background-color: $light;
+      border-radius: 0.5rem;
+    }
+
+    &.DayPicker-Day--today {
+      color: $dark;
+    }
+
+    &.DayPicker-Day--disabled {
+      color: $secondary;
+    }
+
+    &.DayPicker-Day--selected {
+      border-radius: 0;
+
+      &.DayPicker-Day--start {
+        border-top-left-radius: 0.5rem;
+        border-bottom-left-radius: 0.5rem;
+        font-weight: 600;
+      }
+
+      &.DayPicker-Day--end {
+        border-top-right-radius: 0.5rem;
+        border-bottom-right-radius: 0.5rem;
+        font-weight: 600;
+      }
+
+      &.DayPicker-Day--start:not(.DayPicker-Day--outside),
+      &.DayPicker-Day--end:not(.DayPicker-Day--outside) {
+        background-color: $primary;
+        color: $white;
+      }
+      &:not(.DayPicker-Day--start):not(.DayPicker-Day--end):not(.DayPicker-Day--outside) {
+        background-color: $light;
+        color: $components-date-range-sub-color;
+      }
+    }
+  }
+
+  .DayPicker-TodayButton {
+    color: $components-date-range-today-color;
+    font-weight: 600;
+  }
+
+  .DayPicker-Footer {
+    display: flex;
+    justify-content: space-around;
+  }
+}

@@ -1,0 +1,8 @@
+/coverage.txt
+/cmd/karma/bindata_assetfs.go
+/karma
+/karma-*
+/ui/build
+/ui/coverage
+/ui/node_modules
+/TODO.md

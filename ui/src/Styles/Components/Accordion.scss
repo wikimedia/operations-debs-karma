@@ -1,0 +1,10 @@
+.accordion {
+  .card {
+    overflow: unset;
+
+    .card-header.active {
+      color: $body-color;
+      background-color: $accordion-active-bg;
+    }
+  }
+}

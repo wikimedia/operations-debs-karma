@@ -1,0 +1,7 @@
+rules:
+  - action: block
+    reason: prod cluster cannot be silenced
+    scope:
+      filters:
+        - name: cluster
+          value: prod

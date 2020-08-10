@@ -1,0 +1,37 @@
+.components-grid-alertgrid-alertgroup.components-animation-fade-appear-done {
+  will-change: transform;
+  transform: translateZ(0);
+
+  transition-property: transform;
+  transition-duration: 0.4s;
+  transition-timing-function: ease;
+}
+
+.components-grid-alertgrid-alertgroup {
+  padding: 0.3rem;
+}
+
+.components-grid-alertgrid-alertgroup-shared-silence {
+  border-width: 3px;
+  border-style: solid;
+}
+
+.card-footer.components-grid-alertgrid-alertgroup-footer {
+  background-color: $alertgroup-footer-bg;
+}
+
+.card-body.components-grid-alertgrid-card {
+  background-color: $alertgroup-body-bg !important;
+}
+
+.components-label:not(:last-child),
+div.tooltip-trigger:not(:last-child) > .components-label,
+.components-grid-annotation:not(:last-child),
+div.tooltip-trigger:not(:last-child) > .components-grid-annotation {
+  margin-right: 0.25rem;
+}
+
+// larger margin for buttons in the filter input bar
+.components-filterinput > button.components-label:not(:last-child) {
+  margin-right: 0.35rem;
+}
