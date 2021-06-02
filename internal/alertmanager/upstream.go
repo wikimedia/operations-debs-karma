@@ -8,10 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prymitive/karma/internal/filters"
 	"github.com/prymitive/karma/internal/models"
 	"github.com/prymitive/karma/internal/uri"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/rs/zerolog/log"
 )
 
 // Option allows to pass functional options to NewAlertmanager()
@@ -42,7 +43,8 @@ func NewAlertmanager(cluster, name, upstreamURI string, opts ...Option) (*Alertm
 				labelValueErrorsSilences: 0,
 			},
 		},
-		status: models.AlertmanagerStatus{},
+		status:       models.AlertmanagerStatus{},
+		healthchecks: map[string]healthCheck{},
 	}
 
 	for _, opt := range opts {
@@ -73,13 +75,14 @@ func RegisterAlertmanager(am *Alertmanager) error {
 		return fmt.Errorf("alertmanager upstream '%s' already exist", am.Name)
 	}
 
-	for _, existingAM := range upstreams {
-		if existingAM.URI == am.URI {
-			return fmt.Errorf("alertmanager upstream '%s' already collects from '%s'", existingAM.Name, uri.SanitizeURI(existingAM.URI))
-		}
-	}
 	upstreams[am.Name] = am
-	log.Infof("[%s] Configured Alertmanager source at %s (proxied: %v, readonly: %v)", am.Name, uri.SanitizeURI(am.URI), am.ProxyRequests, am.ReadOnly)
+	// am.Name, uri.SanitizeURI(am.URI), am.ProxyRequests, am.ReadOnly
+	log.Info().
+		Str("name", am.Name).
+		Str("uri", uri.SanitizeURI(am.URI)).
+		Bool("proxy", am.ProxyRequests).
+		Bool("readonly", am.ReadOnly).
+		Msg("Configured Alertmanager source")
 	return nil
 }
 
@@ -167,6 +170,34 @@ func WithExternalURI(uri string) Option {
 func WithCORSCredentials(val string) Option {
 	return func(am *Alertmanager) error {
 		am.CORSCredentials = val
+		return nil
+	}
+}
+
+func WithHealthchecks(val map[string][]string) Option {
+	return func(am *Alertmanager) error {
+		healthchecks := map[string]healthCheck{}
+		for name, filterExpressions := range val {
+			hc := healthCheck{
+				filters: []filters.FilterT{},
+			}
+			for _, filterExpression := range filterExpressions {
+				f := filters.NewFilter(filterExpression)
+				if f == nil || !f.GetIsValid() {
+					return fmt.Errorf("%q is not a valid filter", filterExpression)
+				}
+				hc.filters = append(hc.filters, f)
+			}
+			healthchecks[name] = hc
+		}
+		am.healthchecks = healthchecks
+		return nil
+	}
+}
+
+func WithHealthchecksVisible(val bool) Option {
+	return func(am *Alertmanager) error {
+		am.healthchecksVisible = val
 		return nil
 	}
 }

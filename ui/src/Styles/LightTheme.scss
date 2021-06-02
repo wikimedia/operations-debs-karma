@@ -23,9 +23,9 @@ $tooltip-max-width: 400px;
 $link-color: $gray-700;
 
 $navbar-dark-brand-color: $navbar-dark-color;
-$navbar-dark-brand-hover-color: $gray-500;
-$navbar-dark-hover-color: $gray-500;
-$navbar-dark-active-color: $gray-500;
+$navbar-dark-brand-hover-color: $gray-200;
+$navbar-dark-hover-color: $gray-200;
+$navbar-dark-active-color: $gray-200;
 
 // fix active tab color, for some reason it ends up with $primary as bg color
 $nav-tabs-link-active-bg: #fff;
@@ -41,21 +41,23 @@ $pagination-disabled-bg: $gray-300;
 
 $progress-bg: darken($light, 10%);
 
+$with-click-default: $black;
+$with-click-dark: $white;
+$with-click-light: $black;
+
+$accordion-active-bg: $gray-100;
+$accordion-button-bg: $gray-100;
+$accordion-button-active-bg: $gray-100;
+
 @import "Styles/RebootlessBootstrap";
 @import "~bootswatch/dist/flatly/bootswatch";
 
-// this is used for navbar, to make it transparent
-.bg-primary-transparent {
-  background-color: rgba($primary, 0.95);
-}
-// version for modals
-.bg-primary-transparent-80 {
-  background-color: rgba($dark, 0.8);
-}
-
 $alert-bg: $white;
+$alert-history-inactive: lighten($light, 1%);
 $alertgroup-body-bg: $white;
 $alertgroup-footer-bg: $gray-100;
+$silence-id: $dark;
+$silence-color: $dark;
 $silence-bg: $gray-100;
 $silence-border: $gray-700;
 $silence-comment-color: $gray-800;
@@ -70,34 +72,12 @@ $bg-focused: lighten($blue, 5%);
 $components-date-range-today-color: $black;
 $components-date-range-sub-color: $black;
 
-$input-range-neutral-color: $dark;
-$input-range-neutral-light-color: $gray-400;
+$input-range-track-background: $gray-400;
+$input-range-thumb-font-color: $white;
 
 $color-default: #708090;
 
-@import "Styles/Components/Accordion";
-@import "Styles/Components/Alert";
-@import "Styles/Components/AlertGroup";
-@import "Styles/Components/BaseLabel";
-@import "Styles/Components/CenteredMessage";
-@import "Styles/Components/FilterInputLabel";
-@import "Styles/Components/LabelWithPercent";
-@import "Styles/Components/InputRange";
-@import "Styles/Components/ManagedSilence";
-@import "Styles/Components/Modal";
-@import "Styles/Components/NavBar";
-@import "Styles/Components/FilterInput";
-@import "Styles/Components/DateTimeSelect";
-@import "Styles/Components/MountModal";
-@import "Styles/Components/Placeholder";
-@import "Styles/Components/AlertGrid";
-@import "Styles/Components/Annotation";
-@import "Styles/Components/DropdownSlide";
-@import "Styles/Components/History";
-@import "Styles/Components/HistoryLabel";
-@import "Styles/Components/SilenceModal";
-@import "Styles/Components/Pagination";
-@import "Styles/Components/Tooltip";
+@import "Styles/Components";
 
 a {
   color: $link-color;

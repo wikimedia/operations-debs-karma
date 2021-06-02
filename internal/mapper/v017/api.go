@@ -18,7 +18,7 @@ import (
 	"github.com/prymitive/karma/internal/models"
 )
 
-func newClient(uri string, headers map[string]string, httpTransport http.RoundTripper) *client.Alertmanager {
+func newClient(uri string, headers map[string]string, httpTransport http.RoundTripper) *client.AlertmanagerAPI {
 	u, _ := url.Parse(uri)
 
 	transport := httptransport.New(u.Host, path.Join(u.Path, "/api/v2"), []string{u.Scheme})
@@ -40,7 +40,7 @@ func newClient(uri string, headers map[string]string, httpTransport http.RoundTr
 }
 
 // Alerts will fetch all alert groups from the API
-func groups(c *client.Alertmanager, timeout time.Duration) ([]models.AlertGroup, error) {
+func groups(c *client.AlertmanagerAPI, timeout time.Duration) ([]models.AlertGroup, error) {
 	groups, err := c.Alertgroup.GetAlertGroups(alertgroup.NewGetAlertGroupsParamsWithTimeout(timeout))
 	if err != nil {
 		return []models.AlertGroup{}, err
@@ -77,7 +77,7 @@ func groups(c *client.Alertmanager, timeout time.Duration) ([]models.AlertGroup,
 	return ret, nil
 }
 
-func silences(c *client.Alertmanager, timeout time.Duration) ([]models.Silence, error) {
+func silences(c *client.AlertmanagerAPI, timeout time.Duration) ([]models.Silence, error) {
 	silences, err := c.Silence.GetSilences(silence.NewGetSilencesParamsWithTimeout(timeout))
 	if err != nil {
 		return []models.Silence{}, err
@@ -85,6 +85,7 @@ func silences(c *client.Alertmanager, timeout time.Duration) ([]models.Silence, 
 
 	ret := make([]models.Silence, 0, len(silences.Payload))
 
+	var isEqual bool
 	for _, s := range silences.Payload {
 		us := models.Silence{
 			ID:        *s.ID,
@@ -94,10 +95,16 @@ func silences(c *client.Alertmanager, timeout time.Duration) ([]models.Silence, 
 			Comment:   *s.Comment,
 		}
 		for _, m := range s.Matchers {
+			if m.IsEqual != nil {
+				isEqual = *m.IsEqual
+			} else {
+				isEqual = true
+			}
 			sm := models.SilenceMatcher{
 				Name:    *m.Name,
 				Value:   *m.Value,
 				IsRegex: *m.IsRegex,
+				IsEqual: isEqual,
 			}
 			us.Matchers = append(us.Matchers, sm)
 		}
@@ -107,7 +114,7 @@ func silences(c *client.Alertmanager, timeout time.Duration) ([]models.Silence, 
 	return ret, nil
 }
 
-func status(c *client.Alertmanager, timeout time.Duration) (models.AlertmanagerStatus, error) {
+func status(c *client.AlertmanagerAPI, timeout time.Duration) (models.AlertmanagerStatus, error) {
 	ret := models.AlertmanagerStatus{}
 
 	status, err := c.General.GetStatus(general.NewGetStatusParamsWithTimeout(timeout))
@@ -115,7 +122,6 @@ func status(c *client.Alertmanager, timeout time.Duration) (models.AlertmanagerS
 		return ret, err
 	}
 
-	ret.Version = *status.Payload.VersionInfo.Version
 	ret.ID = status.Payload.Cluster.Name
 	for _, p := range status.Payload.Cluster.Peers {
 		ret.PeerIDs = append(ret.PeerIDs, *p.Name)
@@ -149,11 +155,19 @@ func unmarshal(body []byte) (*models.Silence, error) {
 		CreatedBy: *s.CreatedBy,
 		Comment:   *s.Comment,
 	}
+
+	var isEqual bool
 	for _, m := range s.Matchers {
+		if m.IsEqual != nil {
+			isEqual = *m.IsEqual
+		} else {
+			isEqual = true
+		}
 		sm := models.SilenceMatcher{
 			Name:    *m.Name,
 			Value:   *m.Value,
 			IsRegex: *m.IsRegex,
+			IsEqual: isEqual,
 		}
 		us.Matchers = append(us.Matchers, sm)
 	}

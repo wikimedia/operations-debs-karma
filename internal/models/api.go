@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"vbom.ml/util/sortorder"
+	"github.com/fvbommel/sortorder"
 
 	"github.com/prymitive/karma/internal/slices"
 )
@@ -281,7 +281,7 @@ type AlertAcknowledgementSettings struct {
 	Enabled         bool   `json:"enabled"`
 	DurationSeconds int    `json:"durationSeconds"`
 	Author          string `json:"author"`
-	CommentPrefix   string `json:"commentPrefix"`
+	Comment         string `json:"comment"`
 }
 
 // Settings is used to export karma configuration that is used by UI
@@ -290,9 +290,11 @@ type Settings struct {
 	AnnotationsDefaultHidden bool                         `json:"annotationsDefaultHidden"`
 	AnnotationsHidden        []string                     `json:"annotationsHidden"`
 	AnnotationsVisible       []string                     `json:"annotationsVisible"`
+	AnnotationsAllowHTML     bool                         `json:"annotationsEnableHTML"`
 	Sorting                  SortSettings                 `json:"sorting"`
 	SilenceForm              SilenceFormSettings          `json:"silenceForm"`
 	AlertAcknowledgement     AlertAcknowledgementSettings `json:"alertAcknowledgement"`
+	HistoryEnabled           bool                         `json:"historyEnabled"`
 }
 
 type AuthenticationInfo struct {

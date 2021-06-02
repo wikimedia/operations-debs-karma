@@ -2,6 +2,7 @@ package filters_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 	"github.com/prymitive/karma/internal/models"
 	"github.com/prymitive/karma/internal/slices"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 type filterTest struct {
@@ -25,10 +26,35 @@ type filterTest struct {
 
 var tests = []filterTest{
 	{
+		Expression: "",
+		IsValid:    false,
+	},
+	{
+		Expression: " ",
+		IsValid:    false,
+	},
+	{
+		Expression: "\t",
+		IsValid:    false,
+	},
+	{
 		Expression: "@state=active",
 		IsValid:    true,
 		Alert:      models.Alert{},
 		IsMatch:    false,
+	},
+	{
+		Expression: "@state=active ",
+		IsValid:    true,
+		Alert:      models.Alert{},
+		IsMatch:    false,
+	},
+	{
+		Expression:          "@state=active ",
+		IsValid:             true,
+		Alert:               models.Alert{State: "active"},
+		IsMatch:             true,
+		IsAlertmanagerMatch: true,
 	},
 	{
 		Expression:          "@state!=active",
@@ -737,7 +763,7 @@ var tests = []filterTest{
 }
 
 func TestFilters(t *testing.T) {
-	log.SetLevel(log.ErrorLevel)
+	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
 
 	am, err := alertmanager.NewAlertmanager("HA", "test", "http://localhost", alertmanager.WithRequestTimeout(time.Second))
 	if err != nil {
@@ -794,7 +820,7 @@ func TestFilters(t *testing.T) {
 			if !ft.IsMatch && f.GetHits() != 0 {
 				t.Errorf("[%s] GetHits() returned %#v after non-match, expected 0", ft.Expression, f.GetHits())
 			}
-			if f.GetRawText() != ft.Expression {
+			if f.GetRawText() != strings.Trim(ft.Expression, " \t") {
 				t.Errorf("[%s] GetRawText() returned %#v != %s passed as the expression", ft.Expression, f.GetRawText(), ft.Expression)
 			}
 
@@ -832,24 +858,28 @@ type limitFilterTest struct {
 	Expression string
 	IsValid    bool
 	IsMatch    []bool
+	Value      string
 	Hits       int
 }
 
 var limitTests = []limitFilterTest{
 	{
 		Expression: "@limit=3",
+		Value:      "3",
 		IsValid:    true,
 		IsMatch:    []bool{true, true, true},
 		Hits:       0,
 	},
 	{
 		Expression: "@limit=1",
+		Value:      "1",
 		IsValid:    true,
 		IsMatch:    []bool{true, false, false},
 		Hits:       2,
 	},
 	{
 		Expression: "@limit=5",
+		Value:      "5",
 		IsValid:    true,
 		IsMatch:    []bool{true, true, true, true, true, false, false, false},
 		Hits:       3,
@@ -903,6 +933,9 @@ func TestLimitFilter(t *testing.T) {
 			}
 			if f.GetHits() != ft.Hits {
 				t.Errorf("[%s] GetHits() returned %#v hits, expected %d", ft.Expression, f.GetHits(), ft.Hits)
+			}
+			if f.GetValue() != ft.Value {
+				t.Errorf("[%s] GetValue() returned %#v hits, expected %q", ft.Expression, f.GetValue(), ft.Value)
 			}
 		} else {
 			func() {

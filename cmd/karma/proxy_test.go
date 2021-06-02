@@ -2,8 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -11,14 +12,13 @@ import (
 	"testing"
 	"time"
 
-	cache "github.com/patrickmn/go-cache"
+	lru "github.com/hashicorp/golang-lru"
+	"github.com/jarcoal/httpmock"
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/prymitive/karma/internal/alertmanager"
 	"github.com/prymitive/karma/internal/config"
 	"github.com/prymitive/karma/internal/mock"
-	log "github.com/sirupsen/logrus"
-
-	"github.com/jarcoal/httpmock"
-	"github.com/pmezard/go-difflib/difflib"
+	"github.com/rs/zerolog"
 )
 
 // httptest.NewRecorder() doesn't implement http.CloseNotifier
@@ -68,29 +68,27 @@ var proxyTests = []proxyTest{
 		localPath:   "/proxy/alertmanager/INVALID/api/v2/silences",
 		upstreamURI: "",
 		code:        404,
-		response:    "404 page not found",
+		response:    "404 page not found\n",
 	},
 	{
 		method:      "DELETE",
 		localPath:   "/proxy/alertmanager/INVALID/api/v2/silence/d8a61ca8-ee2e-4076-999f-276f1e986bf3",
 		upstreamURI: "http://localhost:9093/api/v2/silence/d8a61ca8-ee2e-4076-999f-276f1e986bf3",
 		code:        404,
-		response:    "404 page not found",
+		response:    "404 page not found\n",
 	},
 	// valid alertmanager name, but invalid method
 	{
 		method:      "GET",
 		localPath:   "/proxy/alertmanager/dummy/api/v2/silences",
 		upstreamURI: "",
-		code:        404,
-		response:    "404 page not found",
+		code:        405,
 	},
 	{
 		method:      "GET",
 		localPath:   "/proxy/alertmanager/dummy/api/v2/silence/d8a61ca8-ee2e-4076-999f-276f1e986bf3",
 		upstreamURI: "http://localhost:9093/api/v2/silence/d8a61ca8-ee2e-4076-999f-276f1e986bf3",
-		code:        404,
-		response:    "404 page not found",
+		code:        405,
 	},
 }
 
@@ -105,7 +103,7 @@ func TestProxy(t *testing.T) {
 
 	config.Config.Listen.Prefix = ""
 
-	r := ginTestEngine()
+	r := testRouter()
 	am, err := alertmanager.NewAlertmanager(
 		"cluster",
 		"dummy",
@@ -116,10 +114,8 @@ func TestProxy(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	err = setupRouterProxyHandlers(r, am)
-	if err != nil {
-		t.Errorf("Failed to setup proxy for Alertmanager %s: %s", am.Name, err)
-	}
+
+	setupRouterProxyHandlers(r, am)
 
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
@@ -145,14 +141,15 @@ func TestProxy(t *testing.T) {
 }
 
 type proxyHeaderTest struct {
-	method           string
-	localPath        string
-	upstreamURI      string
-	code             int
-	alertmanagerURI  string
-	alertmanagerHost string
-	authUser         string
-	authPass         string
+	method              string
+	localPath           string
+	upstreamURI         string
+	code                int
+	alertmanagerURI     string
+	alertmanagerHost    string
+	alertmanagerHeaders map[string]string
+	authUser            string
+	authPass            string
 }
 
 var proxyHeaderTests = []proxyHeaderTest{
@@ -163,6 +160,9 @@ var proxyHeaderTests = []proxyHeaderTest{
 		code:             200,
 		alertmanagerURI:  "http://localhost:9093",
 		alertmanagerHost: "localhost:9093",
+		alertmanagerHeaders: map[string]string{
+			"X-Foo": "bar",
+		},
 	},
 	{
 		method:           "POST",
@@ -171,26 +171,31 @@ var proxyHeaderTests = []proxyHeaderTest{
 		code:             200,
 		alertmanagerURI:  "http://alertmanager.example.com",
 		alertmanagerHost: "alertmanager.example.com",
+		alertmanagerHeaders: map[string]string{
+			"Authorization": "Bearer xxxxx",
+		},
 	},
 	{
-		method:           "POST",
-		localPath:        "/proxy/alertmanager/dummy/api/v2/silences",
-		upstreamURI:      "http://alertmanager.example.com/api/v2/silences",
-		code:             200,
-		alertmanagerURI:  "http://foo:bar@alertmanager.example.com",
-		alertmanagerHost: "alertmanager.example.com",
-		authUser:         "foo",
-		authPass:         "bar",
+		method:              "POST",
+		localPath:           "/proxy/alertmanager/dummy/api/v2/silences",
+		upstreamURI:         "http://alertmanager.example.com/api/v2/silences",
+		code:                200,
+		alertmanagerURI:     "http://foo:bar@alertmanager.example.com",
+		alertmanagerHost:    "alertmanager.example.com",
+		alertmanagerHeaders: map[string]string{},
+		authUser:            "foo",
+		authPass:            "bar",
 	},
 	{
-		method:           "POST",
-		localPath:        "/proxy/alertmanager/dummy/api/v2/silences",
-		upstreamURI:      "http://alertmanager.example.com/api/v2/silences",
-		code:             200,
-		alertmanagerURI:  "http://foo@alertmanager.example.com",
-		alertmanagerHost: "alertmanager.example.com",
-		authUser:         "foo",
-		authPass:         "",
+		method:              "POST",
+		localPath:           "/proxy/alertmanager/dummy/api/v2/silences",
+		upstreamURI:         "http://alertmanager.example.com/api/v2/silences",
+		code:                200,
+		alertmanagerURI:     "http://foo@alertmanager.example.com",
+		alertmanagerHost:    "alertmanager.example.com",
+		alertmanagerHeaders: map[string]string{},
+		authUser:            "foo",
+		authPass:            "",
 	},
 }
 
@@ -208,21 +213,19 @@ func TestProxyHeaders(t *testing.T) {
 
 	for _, testCase := range proxyHeaderTests {
 		testCase := testCase //scopelint pin
-		r := ginTestEngine()
+		r := testRouter()
 		am, err := alertmanager.NewAlertmanager(
 			"cluster",
 			"dummy",
 			testCase.alertmanagerURI,
 			alertmanager.WithRequestTimeout(time.Second*5),
 			alertmanager.WithProxy(true),
+			alertmanager.WithHTTPHeaders(testCase.alertmanagerHeaders),
 		)
 		if err != nil {
 			t.Error(err)
 		}
-		err = setupRouterProxyHandlers(r, am)
-		if err != nil {
-			t.Errorf("Failed to setup proxy for Alertmanager %s: %s", am.Name, err)
-		}
+		setupRouterProxyHandlers(r, am)
 
 		httpmock.Reset()
 		httpmock.RegisterResponder(testCase.method, testCase.upstreamURI, func(req *http.Request) (*http.Response, error) {
@@ -241,6 +244,13 @@ func TestProxyHeaders(t *testing.T) {
 				if testCase.authPass != "" && testCase.authPass != password {
 					t.Errorf("%s %s proxied to %s was expected to have Basic Auth password '%s', got '%s'",
 						testCase.method, testCase.localPath, testCase.upstreamURI, testCase.authPass, password)
+				}
+				for k, v := range testCase.alertmanagerHeaders {
+					got := req.Header.Get(k)
+					if got != v {
+						t.Errorf("%s %s proxied to %s was expected to have header %q=%q, got %v",
+							testCase.method, testCase.localPath, testCase.upstreamURI, k, v, got)
+					}
 				}
 			}
 			return httpmock.NewStringResponse(testCase.code, "ok"), nil
@@ -311,7 +321,7 @@ func TestProxyToSubURIAlertmanager(t *testing.T) {
 		t.Run(fmt.Sprintf("prefix=%s|uri=%s", testCase.listenPrefix, testCase.alertmanagerURI), func(t *testing.T) {
 			httpmock.Reset()
 			config.Config.Listen.Prefix = testCase.listenPrefix
-			r := ginTestEngine()
+			r := testRouter()
 
 			am, err := alertmanager.NewAlertmanager(
 				"cluster",
@@ -323,10 +333,7 @@ func TestProxyToSubURIAlertmanager(t *testing.T) {
 			if err != nil {
 				t.Error(err)
 			}
-			err = setupRouterProxyHandlers(r, am)
-			if err != nil {
-				t.Errorf("Failed to setup proxy for Alertmanager %s: %s", am.Name, err)
-			}
+			setupRouterProxyHandlers(r, am)
 
 			httpmock.RegisterResponder("POST", "http://alertmanager.example.com/suburi/api/v2/silences", func(req *http.Request) (*http.Response, error) {
 				return httpmock.NewStringResponse(200, "ok"), nil
@@ -371,15 +378,7 @@ func TestProxyUserRewrite(t *testing.T) {
   { "isRegex": false, "name": "alertname", "value": "Fake Alert" },
   { "isRegex": true, "name": "foo", "value": "(bar|baz)" }
 ]}`,
-			proxyRequestBody: `{
-"comment": "comment",
-"createdBy": "username",
-"startsAt": "2000-02-01T00:00:00.000Z",
-"endsAt": "2000-02-01T00:02:03.000Z",
-"matchers": [
-  { "isRegex": false, "name": "alertname", "value": "Fake Alert" },
-  { "isRegex": true, "name": "foo", "value": "(bar|baz)" }
-]}`,
+			proxyRequestBody: `{"comment":"comment","createdBy":"","endsAt":"2000-02-01T00:02:03.000Z","matchers":[{"isRegex":false,"name":"alertname","value":"Fake Alert"},{"isRegex":true,"name":"foo","value":"(bar|baz)"}],"startsAt":"2000-02-01T00:00:00.000Z"}`,
 		},
 		{
 			name:         "basicAuth, correct credentials, invalid JSON",
@@ -390,6 +389,7 @@ func TestProxyUserRewrite(t *testing.T) {
 			requestBasicAuthUser:     "john",
 			requestBasicAuthPassword: "foobar",
 			frontednRequestBody:      `{XXX`,
+			proxyRequestBody:         "invalid character 'X' looking for beginning of object key string\n",
 		},
 		{
 			name:         "basicAuth, missing credentials",
@@ -437,12 +437,12 @@ func TestProxyUserRewrite(t *testing.T) {
 ]}`,
 			proxyRequestBody: `{"id":"1234567890","comment":"comment","createdBy":"john","endsAt":"2000-02-01T00:02:03.000Z","matchers":[{"isRegex":false,"name":"alertname","value":"Fake Alert"},{"isRegex":true,"name":"foo","value":"(bar|baz)"}],"startsAt":"2000-02-01T00:00:00.000Z"}`,
 		},
-
 		{
-			name:         "header auth, missing header",
-			responseCode: 401,
-			headerName:   "X-Auth",
-			headerRe:     "(.+)",
+			name:             "header auth, missing header",
+			responseCode:     401,
+			proxyRequestBody: "Access denied\n",
+			headerName:       "X-Auth",
+			headerRe:         "(.+)",
 		},
 		{
 			name:       "header auth, invalid header",
@@ -451,7 +451,8 @@ func TestProxyUserRewrite(t *testing.T) {
 			requestHeaders: map[string]string{
 				"X-Auth": "xxx",
 			},
-			responseCode: 401,
+			responseCode:     401,
+			proxyRequestBody: "Access denied\n",
 		},
 		{
 			name:         "header auth, correct credentials, fixed username",
@@ -498,16 +499,16 @@ func TestProxyUserRewrite(t *testing.T) {
 		httpmock.Activate()
 		defer httpmock.DeactivateAndReset()
 
-		log.SetLevel(log.FatalLevel)
+		zerolog.SetGlobalLevel(zerolog.FatalLevel)
 		t.Run(testCase.name, func(t *testing.T) {
 			for _, version := range mock.ListAllMocks() {
 				t.Logf("Testing alerts using mock files from Alertmanager %s", version)
 
 				config.Config.Listen.Prefix = "/"
+				config.Config.Authentication.Enabled = true
 				config.Config.Authentication.Header.Name = testCase.headerName
 				config.Config.Authentication.Header.ValueRegex = testCase.headerRe
 				config.Config.Authentication.BasicAuth.Users = testCase.basicAuthUsers
-				r := ginTestEngine()
 
 				am, err := alertmanager.NewAlertmanager(
 					"cluster",
@@ -519,12 +520,12 @@ func TestProxyUserRewrite(t *testing.T) {
 				if err != nil {
 					t.Error(err)
 				}
-				err = setupRouterProxyHandlers(r, am)
-				if err != nil {
-					t.Errorf("Failed to setup proxy for Alertmanager %s: %s", am.Name, err)
-				}
 
-				apiCache = cache.New(cache.NoExpiration, 10*time.Second)
+				r := testRouter()
+				setupRouter(r, nil)
+				setupRouterProxyHandlers(r, am)
+
+				apiCache, _ = lru.New(100)
 				httpmock.Reset()
 				mock.RegisterURL("http://localhost/metrics", version, "metrics")
 				mock.RegisterURL("http://localhost/api/v2/status", version, "api/v2/status")
@@ -533,11 +534,11 @@ func TestProxyUserRewrite(t *testing.T) {
 				_ = am.Pull()
 
 				httpmock.RegisterResponder("POST", "http://localhost/api/v2/silences", func(req *http.Request) (*http.Response, error) {
-					body, _ := ioutil.ReadAll(req.Body)
+					body, _ := io.ReadAll(req.Body)
 					return httpmock.NewBytesResponse(200, body), nil
 				})
 
-				req := httptest.NewRequest("POST", "/proxy/alertmanager/proxyAuth/api/v2/silences", ioutil.NopCloser(bytes.NewBufferString(testCase.frontednRequestBody)))
+				req := httptest.NewRequest("POST", "/proxy/alertmanager/proxyAuth/api/v2/silences", io.NopCloser(bytes.NewBufferString(testCase.frontednRequestBody)))
 				for k, v := range testCase.requestHeaders {
 					req.Header.Set(k, v)
 				}
@@ -549,7 +550,7 @@ func TestProxyUserRewrite(t *testing.T) {
 					t.Errorf("Got response code %d instead of %d", resp.Code, testCase.responseCode)
 				}
 
-				gotBody, _ := ioutil.ReadAll(resp.Body)
+				gotBody, _ := io.ReadAll(resp.Body)
 				if string(gotBody) != testCase.proxyRequestBody {
 					diff := difflib.UnifiedDiff{
 						A:        difflib.SplitLines(testCase.proxyRequestBody),
@@ -589,7 +590,7 @@ func TestProxySilenceACL(t *testing.T) {
 "endsAt": "2000-02-01T00:02:03.000Z",
 "matchers": [
 { "isRegex": false, "name": "alertname", "value": "Fake Alert" },
-{ "isRegex": true, "name": "foo", "value": "(bar|baz)" }
+{ "isRegex": true, "isEqual": true, "name": "foo", "value": "(bar|baz)"  }
 ]}`
 
 	proxyTests := []proxyTest{
@@ -851,7 +852,7 @@ func TestProxySilenceACL(t *testing.T) {
 							{
 								Name:    "foo",
 								Value:   "(bar|baz)",
-								IsRegex: true,
+								IsRegex: truePtr(),
 							},
 						},
 					},
@@ -869,7 +870,11 @@ func TestProxySilenceACL(t *testing.T) {
 					Reason: "block all regex silences",
 					Scope: silenceACLScope{
 						Filters: []silenceFilter{
-							{NameRegex: regexp.MustCompile(".*"), ValueRegex: regexp.MustCompile(".*"), IsRegex: true},
+							{
+								NameRegex:  regexp.MustCompile(".*"),
+								ValueRegex: regexp.MustCompile(".*"),
+								IsRegex:    truePtr(),
+							},
 						},
 						Groups:        []string{},
 						Alertmanagers: []string{},
@@ -893,7 +898,11 @@ func TestProxySilenceACL(t *testing.T) {
 					Reason: "block all regex silences",
 					Scope: silenceACLScope{
 						Filters: []silenceFilter{
-							{NameRegex: regexp.MustCompile(".*"), ValueRegex: regexp.MustCompile(".*"), IsRegex: true},
+							{
+								NameRegex:  regexp.MustCompile(".*"),
+								ValueRegex: regexp.MustCompile(".*"),
+								IsRegex:    truePtr(),
+							},
 						},
 						Groups:        []string{"admins"},
 						Alertmanagers: []string{},
@@ -905,7 +914,11 @@ func TestProxySilenceACL(t *testing.T) {
 					Reason: "block all regex silences",
 					Scope: silenceACLScope{
 						Filters: []silenceFilter{
-							{NameRegex: regexp.MustCompile(".*"), ValueRegex: regexp.MustCompile(".*"), IsRegex: true},
+							{
+								NameRegex:  regexp.MustCompile(".*"),
+								ValueRegex: regexp.MustCompile(".*"),
+								IsRegex:    truePtr(),
+							},
 						},
 						Groups:        []string{},
 						Alertmanagers: []string{},
@@ -953,7 +966,11 @@ func TestProxySilenceACL(t *testing.T) {
 					Reason: "block all regex silences",
 					Scope: silenceACLScope{
 						Filters: []silenceFilter{
-							{NameRegex: regexp.MustCompile(".*"), ValueRegex: regexp.MustCompile(".*"), IsRegex: true},
+							{
+								NameRegex:  regexp.MustCompile(".*"),
+								ValueRegex: regexp.MustCompile(".*"),
+								IsRegex:    truePtr(),
+							},
 						},
 						Groups:        []string{"admins"},
 						Alertmanagers: []string{},
@@ -965,7 +982,11 @@ func TestProxySilenceACL(t *testing.T) {
 					Reason: "block all regex silences",
 					Scope: silenceACLScope{
 						Filters: []silenceFilter{
-							{NameRegex: regexp.MustCompile(".*"), ValueRegex: regexp.MustCompile(".*"), IsRegex: true},
+							{
+								NameRegex:  regexp.MustCompile(".*"),
+								ValueRegex: regexp.MustCompile(".*"),
+								IsRegex:    truePtr(),
+							},
 						},
 						Groups:        []string{},
 						Alertmanagers: []string{},
@@ -977,13 +998,276 @@ func TestProxySilenceACL(t *testing.T) {
 			frontednRequestBody: defaultBody,
 			responseCode:        400,
 		},
+		{
+			name: "require everyone to set alert.+ label",
+			authGroups: map[string][]string{
+				"admins": {"bob"},
+				"users":  {"alice"},
+			},
+			silenceACLs: []*silenceACL{
+				{
+					Action: "requireMatcher",
+					Reason: "require everyone to set team label",
+					Scope: silenceACLScope{
+						Filters:       []silenceFilter{},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+					Matchers: aclMatchers{
+						Required: []silenceMatcher{
+							{
+								NameRegex:  regexp.MustCompile("^alert.+$"),
+								ValueRegex: regexp.MustCompile("^.+$"),
+							},
+						},
+					},
+				},
+			},
+			requestUsername:     "unknown",
+			frontednRequestBody: defaultBody,
+			responseCode:        200,
+		},
+		{
+			name: "require everyone to set alertname label",
+			authGroups: map[string][]string{
+				"admins": {"bob"},
+				"users":  {"alice"},
+			},
+			silenceACLs: []*silenceACL{
+				{
+					Action: "requireMatcher",
+					Reason: "require everyone to set alertname label",
+					Scope: silenceACLScope{
+						Filters:       []silenceFilter{},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+					Matchers: aclMatchers{
+						Required: []silenceMatcher{
+							{
+								Name:       "alertname",
+								ValueRegex: regexp.MustCompile("^.+$"),
+							},
+						},
+					},
+				},
+			},
+			requestUsername:     "alice",
+			frontednRequestBody: defaultBody,
+			responseCode:        200,
+		},
+		{
+			name: "require everyone to set team label ",
+			authGroups: map[string][]string{
+				"admins": {"bob"},
+				"users":  {"alice"},
+			},
+			silenceACLs: []*silenceACL{
+				{
+					Action: "requireMatcher",
+					Reason: "require everyone to set team label",
+					Scope: silenceACLScope{
+						Filters:       []silenceFilter{},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+					Matchers: aclMatchers{
+						Required: []silenceMatcher{
+							{
+								Name:       "team",
+								ValueRegex: regexp.MustCompile("^.+$"),
+							},
+						},
+					},
+				},
+			},
+			requestUsername:     "alice",
+			frontednRequestBody: defaultBody,
+			responseCode:        400,
+		},
+		{
+			name: "require everyone to set foo regex label",
+			authGroups: map[string][]string{
+				"admins": {"bob"},
+				"users":  {"alice"},
+			},
+			silenceACLs: []*silenceACL{
+				{
+					Action: "requireMatcher",
+					Reason: "require everyone to set foo regex label",
+					Scope: silenceACLScope{
+						Filters:       []silenceFilter{},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+					Matchers: aclMatchers{
+						Required: []silenceMatcher{
+							{
+								Name:       "foo",
+								ValueRegex: regexp.MustCompile("^.+$"),
+								IsRegex:    truePtr(),
+							},
+						},
+					},
+				},
+			},
+			requestUsername:     "uncle",
+			frontednRequestBody: defaultBody,
+			responseCode:        200,
+		},
+		{
+			name: "require everyone to set alertname regex label",
+			authGroups: map[string][]string{
+				"admins": {"bob"},
+				"users":  {"alice"},
+			},
+			silenceACLs: []*silenceACL{
+				{
+					Action: "requireMatcher",
+					Reason: "require everyone to set alertname regex label",
+					Scope: silenceACLScope{
+						Filters:       []silenceFilter{},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+					Matchers: aclMatchers{
+						Required: []silenceMatcher{
+							{
+								Name:       "alertname",
+								ValueRegex: regexp.MustCompile("^Fake Alert$"),
+								IsRegex:    truePtr(),
+							},
+						},
+					},
+				},
+			},
+			requestUsername:     "uncle",
+			frontednRequestBody: defaultBody,
+			responseCode:        400,
+		},
+		{
+			name: "block negative matchers - block",
+			authGroups: map[string][]string{
+				"admins": {"bob"},
+				"users":  {"alice"},
+			},
+			silenceACLs: []*silenceACL{
+				{
+					Action: "block",
+					Reason: "block negative matchers",
+					Scope: silenceACLScope{
+						Filters: []silenceFilter{
+							{
+								NameRegex:  regexp.MustCompile("^.+$"),
+								ValueRegex: regexp.MustCompile("^.+$"),
+								IsEqual:    falsePtr(),
+							},
+						},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+				},
+			},
+			requestUsername: "uncle",
+			frontednRequestBody: `{
+				"comment": "comment",
+				"createdBy": "alice",
+				"startsAt": "2000-02-01T00:00:00.000Z",
+				"endsAt": "2000-02-01T00:02:03.000Z",
+				"matchers": [
+				{ "isRegex": false, "name": "alertname", "value": "Fake Alert" },
+				{ "isRegex": true, "isEqual": false, "name": "foo", "value": "(bar|baz)"  }
+				]}`,
+			responseCode: 400,
+		},
+		{
+			name: "block negative matchers - pass",
+			authGroups: map[string][]string{
+				"admins": {"bob"},
+				"users":  {"alice"},
+			},
+			silenceACLs: []*silenceACL{
+				{
+					Action: "block",
+					Reason: "block negative matchers",
+					Scope: silenceACLScope{
+						Filters: []silenceFilter{
+							{
+								NameRegex:  regexp.MustCompile("^.+$"),
+								ValueRegex: regexp.MustCompile("^.+$"),
+								IsEqual:    falsePtr(),
+							},
+						},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+				},
+			},
+			requestUsername:     "uncle",
+			frontednRequestBody: defaultBody,
+			responseCode:        200,
+		},
+		{
+			name: "require positive matcher",
+			authGroups: map[string][]string{
+				"admins": {"bob"},
+				"users":  {"alice"},
+			},
+			silenceACLs: []*silenceACL{
+				{
+					Action: "requireMatcher",
+					Reason: "require positive matcher",
+					Scope: silenceACLScope{
+						Filters:       []silenceFilter{},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+					Matchers: aclMatchers{
+						Required: []silenceMatcher{
+							{
+								Name:    "alertname",
+								Value:   "Fake Alert",
+								IsEqual: truePtr(),
+							},
+						},
+					},
+				},
+			},
+			requestUsername:     "uncle",
+			frontednRequestBody: defaultBody,
+			responseCode:        200,
+		},
+		{
+			name: "invalid silence JSON",
+			silenceACLs: []*silenceACL{
+				{
+					Action: "block",
+					Reason: "block all regex silences",
+					Scope: silenceACLScope{
+						Filters: []silenceFilter{
+							{
+								NameRegex:  regexp.MustCompile(".*"),
+								ValueRegex: regexp.MustCompile(".*"),
+								IsRegex:    truePtr(),
+							},
+						},
+						Groups:        []string{},
+						Alertmanagers: []string{},
+					},
+					Matchers: aclMatchers{},
+				},
+			},
+			requestUsername:     "bob",
+			frontednRequestBody: `{XXXX: 1bC]}`,
+			responseCode:        500,
+		},
 	}
 
 	for _, testCase := range proxyTests {
 		httpmock.Activate()
 		defer httpmock.DeactivateAndReset()
 
-		log.SetLevel(log.FatalLevel)
+		zerolog.SetGlobalLevel(zerolog.FatalLevel)
 		t.Run(testCase.name, func(t *testing.T) {
 			for _, version := range mock.ListAllMocks() {
 				t.Logf("Testing alerts using mock files from Alertmanager %s", version)
@@ -1000,7 +1284,8 @@ func TestProxySilenceACL(t *testing.T) {
 
 				silenceACLs = testCase.silenceACLs
 
-				r := ginTestEngine()
+				r := testRouter()
+				setupRouter(r, nil)
 
 				am, err := alertmanager.NewAlertmanager(
 					"cluster",
@@ -1012,12 +1297,9 @@ func TestProxySilenceACL(t *testing.T) {
 				if err != nil {
 					t.Error(err)
 				}
-				err = setupRouterProxyHandlers(r, am)
-				if err != nil {
-					t.Errorf("Failed to setup proxy for Alertmanager %s: %s", am.Name, err)
-				}
+				setupRouterProxyHandlers(r, am)
 
-				apiCache = cache.New(cache.NoExpiration, 10*time.Second)
+				apiCache, _ = lru.New(100)
 				httpmock.Reset()
 				mock.RegisterURL("http://localhost/metrics", version, "metrics")
 				mock.RegisterURL("http://localhost/api/v2/status", version, "api/v2/status")
@@ -1026,11 +1308,11 @@ func TestProxySilenceACL(t *testing.T) {
 				_ = am.Pull()
 
 				httpmock.RegisterResponder("POST", "http://localhost/api/v2/silences", func(req *http.Request) (*http.Response, error) {
-					body, _ := ioutil.ReadAll(req.Body)
+					body, _ := io.ReadAll(req.Body)
 					return httpmock.NewBytesResponse(200, body), nil
 				})
 
-				req := httptest.NewRequest("POST", "/proxy/alertmanager/proxyACL/api/v2/silences", ioutil.NopCloser(bytes.NewBufferString(testCase.frontednRequestBody)))
+				req := httptest.NewRequest("POST", "/proxy/alertmanager/proxyACL/api/v2/silences", io.NopCloser(bytes.NewBufferString(testCase.frontednRequestBody)))
 				req.Header.Set("X-User", testCase.requestUsername)
 
 				resp := newCloseNotifyingRecorder()
@@ -1040,5 +1322,108 @@ func TestProxySilenceACL(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type errReader int
+
+func (errReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("request read error")
+}
+
+func TestProxyRequestReadFailure(t *testing.T) {
+	for _, version := range mock.ListAllMocks() {
+		t.Logf("Testing alerts using mock files from Alertmanager %s", version)
+		config.Config.Listen.Prefix = "/"
+		config.Config.Authentication.Header.Name = ""
+		config.Config.Authentication.BasicAuth.Users = []config.AuthenticationUser{}
+
+		r := testRouter()
+		setupRouter(r, nil)
+
+		am, err := alertmanager.NewAlertmanager(
+			"cluster",
+			"proxyRead",
+			"http://localhost",
+			alertmanager.WithRequestTimeout(time.Second*5),
+			alertmanager.WithProxy(true),
+		)
+		if err != nil {
+			t.Error(err)
+		}
+		setupRouterProxyHandlers(r, am)
+
+		req := httptest.NewRequest("POST", "/proxy/alertmanager/proxyRead/api/v2/silences", errReader(0))
+
+		resp := newCloseNotifyingRecorder()
+		r.ServeHTTP(resp, req)
+		if resp.Code != 500 {
+			t.Errorf("Got response code %d instead of 500", resp.Code)
+		}
+
+		gotBody, _ := io.ReadAll(resp.Body)
+		if string(gotBody) != "request read error\n" {
+			t.Errorf("Body mismatch:\n%s", gotBody)
+		}
+	}
+}
+
+func TestProxyRequestToUnsupportedAlertmanager(t *testing.T) {
+	zerolog.SetGlobalLevel(zerolog.FatalLevel)
+
+	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
+	config.Config.Listen.Prefix = "/"
+	config.Config.Authentication.Header.Name = ""
+	config.Config.Authentication.BasicAuth.Users = []config.AuthenticationUser{}
+
+	r := testRouter()
+	setupRouter(r, nil)
+
+	am, err := alertmanager.NewAlertmanager(
+		"cluster",
+		"proxyToUnsupported",
+		"http://localhost",
+		alertmanager.WithRequestTimeout(time.Second*5),
+		alertmanager.WithProxy(true),
+	)
+	if err != nil {
+		t.Error(err)
+	}
+	setupRouterProxyHandlers(r, am)
+
+	apiCache, _ = lru.New(100)
+	httpmock.Reset()
+	httpmock.RegisterResponder("GET", "http://localhost/metrics", httpmock.NewStringResponder(200, `alertmanager_build_info{version="0.1.0"} 1
+	`))
+	httpmock.RegisterResponder("GET", "http://localhost/api/v2/status", httpmock.NewStringResponder(200, `{
+		"cluster": {
+			"name": "BBBBBBBBBBBBBBBBBBBBBBBBBB",
+			"peers": [],
+			"status": "ready"
+		}
+	}`))
+	httpmock.RegisterResponder("POST", "http://localhost/api/v2/silences", httpmock.NewStringResponder(200, "{}"))
+	httpmock.RegisterResponder("GET", "http://localhost/api/v2/silences", httpmock.NewStringResponder(200, "[]"))
+	httpmock.RegisterResponder("GET", "http://localhost/api/v2/alerts/groups", httpmock.NewStringResponder(200, "[]"))
+	_ = am.Pull()
+
+	if ver := am.Version(); ver != "0.1.0" {
+		t.Errorf("Got wrong version: %q", ver)
+		return
+	}
+
+	req := httptest.NewRequest("POST", "/proxy/alertmanager/proxyToUnsupported/api/v2/silences", io.NopCloser(bytes.NewBufferString(`{}`)))
+
+	resp := newCloseNotifyingRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != 500 {
+		t.Errorf("Got response code %d instead of 500", resp.Code)
+	}
+
+	gotBody, _ := io.ReadAll(resp.Body)
+	if string(gotBody) != "can't find silence mapper for Alertmanager 0.1.0\n" {
+		t.Errorf("Body mismatch:\n%s", gotBody)
 	}
 }

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,56 +15,59 @@ import (
 	"testing"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/prymitive/karma/internal/alertmanager"
 	"github.com/prymitive/karma/internal/config"
 	"github.com/prymitive/karma/internal/mock"
 	"github.com/prymitive/karma/internal/models"
 	"github.com/prymitive/karma/internal/slices"
 
-	cache "github.com/patrickmn/go-cache"
-	log "github.com/sirupsen/logrus"
-
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/go-cmp/cmp"
 	"github.com/jarcoal/httpmock"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/pflag"
 )
 
 var upstreamSetup = false
 
 func mockConfig() {
-	log.SetLevel(log.ErrorLevel)
+	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
 	os.Setenv("ALERTMANAGER_URI", "http://localhost")
 	os.Setenv("LABELS_COLOR_UNIQUE", "alertname @receiver @alertmanager @cluster")
 
 	f := pflag.NewFlagSet(".", pflag.ExitOnError)
 	config.SetupFlags(f)
-	config.Config.Read(f)
+	_, err := config.Config.Read(f)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error")
+	}
 
 	if !upstreamSetup {
 		upstreamSetup = true
 		err := setupUpstreams()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal().Err(err).Msg("Error")
 		}
 	}
 }
 
-func ginTestEngine() *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	setupRouter(r)
+func testRouter() *chi.Mux {
+	router := chi.NewRouter()
 
-	var t *template.Template
-	t = loadTemplate(t, "ui/build/index.html")
-	r.SetHTMLTemplate(t)
+	err := loadTemplates()
+	if err != nil {
+		panic(err)
+	}
 
-	return r
+	return router
 }
 
 func TestHealth(t *testing.T) {
 	mockConfig()
-	r := ginTestEngine()
+	r := testRouter()
+	setupRouter(r, nil)
 	req := httptest.NewRequest("GET", "/health", nil)
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
@@ -71,11 +76,24 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestRobots(t *testing.T) {
+	mockConfig()
+	r := testRouter()
+	setupRouter(r, nil)
+	req := httptest.NewRequest("GET", "/robots.txt", nil)
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Errorf("GET /robots.txt returned status %d", resp.Code)
+	}
+}
+
 func TestHealthPrefix(t *testing.T) {
 	os.Setenv("LISTEN_PREFIX", "/prefix")
 	defer os.Unsetenv("LISTEN_PREFIX")
 	mockConfig()
-	r := ginTestEngine()
+	r := testRouter()
+	setupRouter(r, nil)
 	req := httptest.NewRequest("GET", "/prefix/health", nil)
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
@@ -85,26 +103,110 @@ func TestHealthPrefix(t *testing.T) {
 }
 
 func TestIndex(t *testing.T) {
-	mockConfig()
-	r := ginTestEngine()
-	req := httptest.NewRequest("GET", "/", nil)
-	resp := httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusOK {
-		t.Errorf("GET / returned status %d", resp.Code)
+	type testCaseT struct {
+		prefix   string
+		request  string
+		status   int
+		redirect string
+	}
+
+	testCases := []testCaseT{
+		{
+			prefix:  "",
+			request: "/",
+			status:  200,
+		},
+		{
+			prefix:  "",
+			request: "/alerts.json",
+			status:  200,
+		},
+		{
+			prefix:  "/",
+			request: "/",
+			status:  200,
+		},
+		{
+			prefix:  "/",
+			request: "/alerts.json",
+			status:  200,
+		},
+		{
+			prefix:  "/prefix",
+			request: "/",
+			status:  404,
+		},
+		{
+			prefix:  "/prefix",
+			request: "/alerts.json",
+			status:  404,
+		},
+		{
+			prefix:  "/prefix",
+			request: "/prefix/",
+			status:  200,
+		},
+		{
+			prefix:  "/prefix",
+			request: "/prefix/alerts.json",
+			status:  200,
+		},
+		{
+			prefix:   "/prefix",
+			request:  "/prefix",
+			status:   301,
+			redirect: "/prefix/",
+		},
+		{
+			prefix:   "/prefix/",
+			request:  "/prefix",
+			status:   301,
+			redirect: "/prefix/",
+		},
+		{
+			prefix:  "/prefix/",
+			request: "/prefix/",
+			status:  200,
+		},
+		{
+			prefix:  "/prefix/",
+			request: "/prefix/alerts.json",
+			status:  200,
+		},
+	}
+
+	defer func() {
+		config.Config.Listen.Prefix = "/"
+	}()
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("prefix=%s request=%s status=%d", tc.prefix, tc.request, tc.status), func(t *testing.T) {
+			os.Setenv("LISTEN_PREFIX", tc.prefix)
+			defer os.Unsetenv("LISTEN_PREFIX")
+			mockConfig()
+			r := testRouter()
+			setupRouter(r, nil)
+			req := httptest.NewRequest("GET", tc.request, nil)
+			resp := httptest.NewRecorder()
+			r.ServeHTTP(resp, req)
+			if resp.Code != tc.status {
+				t.Errorf("GET %s returned status %d, expected %d", tc.request, resp.Code, tc.status)
+				return
+			}
+			if resp.Code/100 == 3 && tc.status/100 == 3 {
+				if resp.Header().Get("Location") != tc.redirect {
+					t.Errorf("GET %s returned redirect to %s, expected %s", tc.request, resp.Header().Get("Location"), tc.redirect)
+				}
+			}
+		})
 	}
 }
 
-func TestIndexPrefix(t *testing.T) {
-	os.Setenv("LISTEN_PREFIX", "/prefix")
-	defer os.Unsetenv("LISTEN_PREFIX")
-	mockConfig()
-	r := ginTestEngine()
-	req := httptest.NewRequest("GET", "/prefix/", nil)
-	resp := httptest.NewRecorder()
-	r.ServeHTTP(resp, req)
-	if resp.Code != http.StatusOK {
-		t.Errorf("GET /prefix/ returned status %d", resp.Code)
+func mockCache() {
+	if apiCache == nil {
+		apiCache, _ = lru.New(100)
+	} else {
+		apiCache.Purge()
 	}
 }
 
@@ -112,11 +214,7 @@ func mockAlerts(version string) {
 	httpmock.Activate()
 	defer httpmock.DeactivateAndReset()
 
-	if apiCache == nil {
-		apiCache = cache.New(cache.NoExpiration, time.Hour)
-	} else {
-		apiCache.Flush()
-	}
+	mockCache()
 
 	mock.RegisterURL("http://localhost/metrics", version, "metrics")
 	mock.RegisterURL("http://localhost/api/v2/status", version, "api/v2/status")
@@ -131,7 +229,8 @@ func TestAlerts(t *testing.T) {
 	for _, version := range mock.ListAllMocks() {
 		t.Logf("Testing alerts using mock files from Alertmanager %s", version)
 		mockAlerts(version)
-		r := ginTestEngine()
+		r := testRouter()
+		setupRouter(r, nil)
 		// re-run a few times to test the cache
 		for i := 1; i <= 3; i++ {
 			req := httptest.NewRequest("GET", "/alerts.json?q=@receiver=by-cluster-service&q=alertname=HTTP_Probe_Failed&q=instance=web1", nil)
@@ -316,10 +415,11 @@ func TestGrids(t *testing.T) {
 			testCase := testCase
 			t.Run(fmt.Sprintf("version=%q gridLabel=%q query=%q", version, testCase.gridLabel, testCase.requestQuery), func(t *testing.T) {
 				mockAlerts(version)
-				r := ginTestEngine()
+				r := testRouter()
+				setupRouter(r, nil)
 				// re-run a few times to test the cache
 				for i := 1; i <= 3; i++ {
-					apiCache.Flush()
+					apiCache.Purge()
 					req := httptest.NewRequest("GET", "/alerts.json?gridLabel="+testCase.gridLabel+testCase.requestQuery, nil)
 					resp := httptest.NewRecorder()
 					r.ServeHTTP(resp, req)
@@ -360,7 +460,8 @@ func TestValidateAllAlerts(t *testing.T) {
 	for _, version := range mock.ListAllMocks() {
 		t.Logf("Validating alerts.json response using mock files from Alertmanager %s", version)
 		mockAlerts(version)
-		r := ginTestEngine()
+		r := testRouter()
+		setupRouter(r, nil)
 		// re-run a few times to test the cache
 		for i := 1; i <= 3; i++ {
 			req := httptest.NewRequest("GET", "/alerts.json?q=alertname=HTTP_Probe_Failed&q=instance=web1", nil)
@@ -541,7 +642,8 @@ func TestAutocomplete(t *testing.T) {
 	for _, version := range mock.ListAllMocks() {
 		t.Logf("Testing autocomplete using mock files from Alertmanager %s", version)
 		mockAlerts(version)
-		r := ginTestEngine()
+		r := testRouter()
+		setupRouter(r, nil)
 
 		// re-run a few times to test the cache
 		for i := 1; i <= 3; i++ {
@@ -584,7 +686,8 @@ func TestAutocomplete(t *testing.T) {
 
 func TestGzipMiddleware(t *testing.T) {
 	mockConfig()
-	r := ginTestEngine()
+	r := testRouter()
+	setupRouter(r, nil)
 	paths := []string{"/", "/alerts.json", "/autocomplete.json", "/metrics"}
 	for _, path := range paths {
 		// re-run a few times to test the cache
@@ -610,7 +713,8 @@ func TestGzipMiddleware(t *testing.T) {
 
 func TestGzipMiddlewareWithoutAcceptEncoding(t *testing.T) {
 	mockConfig()
-	r := ginTestEngine()
+	r := testRouter()
+	setupRouter(r, nil)
 	paths := []string{"/", "/alerts.json", "/autocomplete.json", "/metrics"}
 	for _, path := range paths {
 		// re-run a few times to test the cache
@@ -750,6 +854,24 @@ func TestSilences(t *testing.T) {
 			showExpired: "1",
 			results:     []string{silenceHostDown, silenceInstance, silenceServer7},
 		},
+		{
+			searchTerm:  "@cluster=Default",
+			sortReverse: "0",
+			showExpired: "0",
+			results:     []string{silenceHostDown, silenceInstance, silenceServer7},
+		},
+		{
+			searchTerm:  "Default",
+			sortReverse: "0",
+			showExpired: "0",
+			results:     []string{silenceHostDown, silenceInstance, silenceServer7},
+		},
+		{
+			searchTerm:  "instance=server7",
+			sortReverse: "0",
+			showExpired: "0",
+			results:     []string{silenceServer7},
+		},
 	}
 
 	mockConfig()
@@ -757,7 +879,8 @@ func TestSilences(t *testing.T) {
 		for _, version := range mock.ListAllMocks() {
 			t.Logf("Validating silences.json response using mock files from Alertmanager %s", version)
 			mockAlerts(version)
-			r := ginTestEngine()
+			r := testRouter()
+			setupRouter(r, nil)
 			// re-run a few times to test the cache
 			for i := 1; i <= 3; i++ {
 				uri := fmt.Sprintf("/silences.json?showExpired=%s&sortReverse=%s&searchTerm=%s", testCase.showExpired, testCase.sortReverse, testCase.searchTerm)
@@ -788,7 +911,8 @@ func TestSilences(t *testing.T) {
 
 func TestCORS(t *testing.T) {
 	mockConfig()
-	r := ginTestEngine()
+	r := testRouter()
+	setupRouter(r, nil)
 	req := httptest.NewRequest("OPTIONS", "/alerts.json", nil)
 	req.Header.Set("Origin", "foo.example.com")
 	resp := httptest.NewRecorder()
@@ -800,7 +924,8 @@ func TestCORS(t *testing.T) {
 
 func TestEmptySettings(t *testing.T) {
 	mockConfig()
-	r := ginTestEngine()
+	r := testRouter()
+	setupRouter(r, nil)
 	req := httptest.NewRequest("GET", "/alerts.json", nil)
 
 	resp := httptest.NewRecorder()
@@ -837,8 +962,9 @@ func TestEmptySettings(t *testing.T) {
 			Enabled:         false,
 			DurationSeconds: 900,
 			Author:          "karma",
-			CommentPrefix:   "ACK!",
+			Comment:         "ACK! This alert was acknowledged using karma on %NOW%",
 		},
+		HistoryEnabled: true,
 	}
 
 	if diff := cmp.Diff(expectedSettings, ur.Settings); diff != "" {
@@ -868,6 +994,14 @@ func TestAuthentication(t *testing.T) {
 			responseCode: 401,
 		},
 		{
+			name: "basic auth, request with empty Authorization header, 401",
+			basicAuthUsers: []config.AuthenticationUser{
+				{Username: "john", Password: "foobar"},
+			},
+			requestHeaders: map[string]string{"Authorization": ""},
+			responseCode:   401,
+		},
+		{
 			name: "basic auth, missing password, 401",
 			basicAuthUsers: []config.AuthenticationUser{
 				{Username: "john", Password: "foobar"},
@@ -890,6 +1024,15 @@ func TestAuthentication(t *testing.T) {
 			},
 			requestBasicAuthUser:     "john",
 			requestBasicAuthPassword: "foobarx",
+			responseCode:             401,
+		},
+		{
+			name: "basic auth, wrong user, 401",
+			basicAuthUsers: []config.AuthenticationUser{
+				{Username: "john", Password: "foobar"},
+			},
+			requestBasicAuthUser:     "johnx",
+			requestBasicAuthPassword: "foobar",
 			responseCode:             401,
 		},
 		{
@@ -953,7 +1096,9 @@ func TestAuthentication(t *testing.T) {
 			config.Config.Authentication.Header.Name = testCase.headerName
 			config.Config.Authentication.Header.ValueRegex = testCase.headerRe
 			config.Config.Authentication.BasicAuth.Users = testCase.basicAuthUsers
-			r := ginTestEngine()
+			r := testRouter()
+			setupRouter(r, nil)
+			mockCache()
 			for _, path := range []string{
 				"/",
 				"/alerts.json",
@@ -963,6 +1108,10 @@ func TestAuthentication(t *testing.T) {
 				"/silences.json",
 				"/custom.css",
 				"/custom.js",
+				"/health",
+				"/health?foo",
+				"/metrics",
+				"/metrics?bar=foo",
 			} {
 				req := httptest.NewRequest("GET", path, nil)
 				for k, v := range testCase.requestHeaders {
@@ -971,6 +1120,14 @@ func TestAuthentication(t *testing.T) {
 				req.SetBasicAuth(testCase.requestBasicAuthUser, testCase.requestBasicAuthPassword)
 				resp := httptest.NewRecorder()
 				r.ServeHTTP(resp, req)
+
+				if strings.HasPrefix(path, "/health") || strings.HasPrefix(path, "/metrics") {
+					if resp.Code != 200 {
+						t.Errorf("%s should always return 200, got %d", path, resp.Code)
+					}
+					continue
+				}
+
 				if resp.Code != testCase.responseCode {
 					t.Errorf("Expected %d from %s, got %d", testCase.responseCode, path, resp.Code)
 				}
@@ -993,8 +1150,37 @@ func TestAuthentication(t *testing.T) {
 	}
 }
 
+func TestInvalidBasicAuthHeader(t *testing.T) {
+	config.Config.Authentication.Header.Name = ""
+	config.Config.Authentication.Header.ValueRegex = ""
+	config.Config.Authentication.BasicAuth.Users = []config.AuthenticationUser{
+		{Username: "john", Password: "foobar"},
+	}
+	r := testRouter()
+	setupRouter(r, nil)
+	mockCache()
+	for _, path := range []string{
+		"/",
+		"/alerts.json",
+		"/autocomplete.json?term=foo",
+		"/labelNames.json",
+		"/labelValues.json?name=foo",
+		"/silences.json",
+		"/custom.css",
+		"/custom.js",
+	} {
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set("Authorization", "")
+		resp := httptest.NewRecorder()
+		r.ServeHTTP(resp, req)
+		if resp.Code != 401 {
+			t.Errorf("Expected 401 from %s, got %d", path, resp.Code)
+		}
+	}
+}
+
 func TestUpstreamStatus(t *testing.T) {
-	log.SetLevel(log.FatalLevel)
+	zerolog.SetGlobalLevel(zerolog.FatalLevel)
 
 	type mockT struct {
 		uri  string
@@ -1057,7 +1243,7 @@ func TestUpstreamStatus(t *testing.T) {
 							"X-Bar": "Foo",
 						},
 						CORSCredentials: "include",
-						Error:           `^unknown error \(status 404\): .+`,
+						Error:           `^response status code does not match any response statuses defined for this endpoint in the swagger spec \(status 404\): .+`,
 						Version:         "",
 						Cluster:         "default",
 						ClusterMembers:  []string{"default"},
@@ -1074,12 +1260,14 @@ func TestUpstreamStatus(t *testing.T) {
 				{
 					uri:  "http://ha1.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.20.0"} 1`,
+					body: `alertmanager_build_info{version="0.20.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha2.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.19.0"} 1`,
+					body: `alertmanager_build_info{version="0.19.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha1.example.com/api/v2/status",
@@ -1217,12 +1405,14 @@ func TestUpstreamStatus(t *testing.T) {
 				{
 					uri:  "http://ha1.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.20.0"} 1`,
+					body: `alertmanager_build_info{version="0.20.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha2.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.19.0"} 1`,
+					body: `alertmanager_build_info{version="0.19.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha1.example.com/api/v2/status",
@@ -1358,12 +1548,14 @@ func TestUpstreamStatus(t *testing.T) {
 				{
 					uri:  "http://ha1.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.20.0"} 1`,
+					body: `alertmanager_build_info{version="0.20.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha2.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.19.0"} 1`,
+					body: `alertmanager_build_info{version="0.19.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha1.example.com/api/v2/status",
@@ -1464,9 +1656,9 @@ func TestUpstreamStatus(t *testing.T) {
 						ReadOnly:        false,
 						Headers:         map[string]string{},
 						CORSCredentials: "omit",
-						Error:           "",
+						Error:           "missing cluster peers: ha2",
 						Version:         "0.20.0",
-						Cluster:         "ha1",
+						Cluster:         "Broken HA",
 						ClusterMembers:  []string{"ha1"},
 					},
 					{
@@ -1476,30 +1668,31 @@ func TestUpstreamStatus(t *testing.T) {
 						ReadOnly:        true,
 						Headers:         map[string]string{},
 						CORSCredentials: "omit",
-						Error:           "",
+						Error:           "missing cluster peers: ha1",
 						Version:         "0.19.0",
-						Cluster:         "ha2",
+						Cluster:         "Broken HA",
 						ClusterMembers:  []string{"ha2"},
 					},
 				},
 				Clusters: map[string][]string{
-					"ha1": {"ha1"},
-					"ha2": {"ha2"},
+					"Broken HA": {"ha1"},
 				},
 			},
 		},
 		{
-			Name: "Broken Cluster Without Name",
+			Name: "Split Cluster Without Name",
 			mocks: []mockT{
 				{
 					uri:  "http://ha1.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.20.0"} 1`,
+					body: `alertmanager_build_info{version="0.20.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha2.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.19.0"} 1`,
+					body: `alertmanager_build_info{version="0.19.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha1.example.com/api/v2/status",
@@ -1623,6 +1816,149 @@ func TestUpstreamStatus(t *testing.T) {
 			},
 		},
 		{
+			Name: "Broken Cluster Without Name",
+			mocks: []mockT{
+				{
+					uri:  "http://broken1.example.com/metrics",
+					code: 200,
+					body: `alertmanager_build_info{version="0.20.0"} 1
+					`,
+				},
+				{
+					uri:  "http://broken2.example.com/metrics",
+					code: 200,
+					body: `alertmanager_build_info{version="0.20.0"} 1
+					`,
+				},
+				{
+					uri:  "http://broken1.example.com/api/v2/status",
+					code: 200,
+					body: `{
+	"cluster": {
+		"name": "AAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"peers": [
+			{
+				"address": "10.16.0.1:9094",
+				"name": "AAAAAAAAAAAAAAAAAAAAAAAAAA"
+			},
+			{
+				"address": "10.16.0.2:9094",
+				"name": "BBBBBBBBBBBBBBBBBBBBBBBBBB"
+			}
+		],
+		"status": "ready"
+	},
+	"versionInfo": {
+		"version":"0.20.0"
+	}
+}`,
+				},
+				{
+					uri:  "http://broken2.example.com/api/v2/status",
+					code: 200,
+					body: `{
+	"cluster": {
+		"name": "BBBBBBBBBBBBBBBBBBBBBBBBBB",
+		"peers": [
+			{
+				"address": "10.16.0.1:9094",
+				"name": "AAAAAAAAAAAAAAAAAAAAAAAAAA"
+			},
+			{
+				"address": "10.16.0.2:9094",
+				"name": "BBBBBBBBBBBBBBBBBBBBBBBBBB"
+			}
+		],
+		"status": "ready"
+	},
+	"versionInfo": {
+		"version":"0.20.0"
+	}
+}`,
+				},
+				{
+					uri:  "http://broken1.example.com/api/v2/alerts/groups",
+					code: 200,
+					body: "[]",
+				},
+				{
+					uri:  "http://broken1.example.com/api/v2/silences",
+					code: 200,
+					body: "[]",
+				},
+				{
+					uri:  "http://broken2.example.com/api/v2/alerts/groups",
+					code: 500,
+					body: "Internal Error\n",
+				},
+				{
+					uri:  "http://broken2.example.com/api/v2/silences",
+					code: 500,
+					body: "Internal Error\n",
+				},
+			},
+			upstreams: []config.AlertmanagerConfig{
+				{
+					Name:     "broken1",
+					URI:      "http://broken1.example.com",
+					Proxy:    false,
+					ReadOnly: false,
+					Headers:  map[string]string{},
+					CORS: config.AlertmanagerCORS{
+						Credentials: "omit",
+					},
+					Timeout: time.Second * 10,
+				},
+				{
+					Name:     "broken2",
+					URI:      "http://broken2.example.com",
+					Proxy:    false,
+					ReadOnly: true,
+					Headers:  map[string]string{},
+					CORS: config.AlertmanagerCORS{
+						Credentials: "omit",
+					},
+					Timeout: time.Second * 10,
+				},
+			},
+			status: models.AlertmanagerAPISummary{
+				Counters: models.AlertmanagerAPICounters{
+					Total:   2,
+					Healthy: 1,
+					Failed:  1,
+				},
+				Instances: []models.AlertmanagerAPIStatus{
+					{
+						Name:            "broken1",
+						URI:             "http://broken1.example.com",
+						PublicURI:       "http://broken1.example.com",
+						ReadOnly:        false,
+						Headers:         map[string]string{},
+						CORSCredentials: "omit",
+						Error:           "",
+						Version:         "0.20.0",
+						Cluster:         "broken1 | broken2",
+						ClusterMembers:  []string{"broken1", "broken2"},
+					},
+					{
+						Name:            "broken2",
+						URI:             "http://broken2.example.com",
+						PublicURI:       "http://broken2.example.com",
+						ReadOnly:        true,
+						Headers:         map[string]string{},
+						CORSCredentials: "omit",
+						Error:           "invalid character 'I' looking for beginning of value",
+						Version:         "0.20.0",
+						Cluster:         "broken1 | broken2",
+						ClusterMembers:  []string{"broken1", "broken2"},
+					},
+				},
+				Clusters: map[string][]string{
+					"broken1 | broken2": {"broken1", "broken2"},
+				},
+			},
+		},
+		{
 			Name: "Cluster with name and errors",
 			mocks: []mockT{
 				{
@@ -1633,7 +1969,8 @@ func TestUpstreamStatus(t *testing.T) {
 				{
 					uri:  "http://ha2.example.com/metrics",
 					code: 200,
-					body: `alertmanager_build_info{version="0.21.0"} 1`,
+					body: `alertmanager_build_info{version="0.21.0"} 1
+					`,
 				},
 				{
 					uri:  "http://ha1.example.com/api/v2/status",
@@ -1743,9 +2080,9 @@ func TestUpstreamStatus(t *testing.T) {
 						Headers:         map[string]string{},
 						CORSCredentials: "omit",
 						Error:           "",
-						Version:         "0.20.0",
-						Cluster:         "ha1",
-						ClusterMembers:  []string{"ha1"},
+						Version:         "",
+						Cluster:         "Errors",
+						ClusterMembers:  []string{"ha1", "ha2"},
 					},
 					{
 						Name:            "ha2",
@@ -1755,14 +2092,267 @@ func TestUpstreamStatus(t *testing.T) {
 						Headers:         map[string]string{},
 						CORSCredentials: "omit",
 						Error:           "json: cannot unmarshal array into Go value of type string",
-						Version:         "",
-						Cluster:         "ha2",
-						ClusterMembers:  []string{"ha2"},
+						Version:         "0.21.0",
+						Cluster:         "Errors",
+						ClusterMembers:  []string{"ha1", "ha2"},
 					},
 				},
 				Clusters: map[string][]string{
-					"ha1": {"ha1"},
-					"ha2": {"ha2"},
+					"Errors": {"ha1", "ha2"},
+				},
+			},
+		},
+		{
+			Name: "Single alertmanager from HA Cluster Without Name",
+			mocks: []mockT{
+				{
+					uri:  "http://ha1.example.com/metrics",
+					code: 200,
+					body: `alertmanager_build_info{version="0.20.0"} 1
+					`,
+				},
+				{
+					uri:  "http://ha2.example.com/metrics",
+					code: 200,
+					body: `alertmanager_build_info{version="0.19.0"} 1`,
+				},
+				{
+					uri:  "http://single.example.com/metrics",
+					code: 200,
+					body: `alertmanager_build_info{version="0.21.0"} 1
+					`,
+				},
+				{
+					uri:  "http://ha1.example.com/api/v2/status",
+					code: 200,
+					body: `{
+	"cluster": {
+		"name": "AAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"peers": [
+			{
+				"address": "10.16.0.1:9094",
+				"name": "AAAAAAAAAAAAAAAAAAAAAAAAAA"
+			},
+			{
+				"address": "10.16.0.2:9094",
+				"name": "BBBBBBBBBBBBBBBBBBBBBBBBBB"
+			}
+		],
+		"status": "ready"
+	},
+	"versionInfo": {
+		"version":"0.20.0"
+	}
+}`,
+				},
+				{
+					uri:  "http://ha2.example.com/api/v2/status",
+					code: 200,
+					body: `{
+	"cluster": {
+		"name": "BBBBBBBBBBBBBBBBBBBBBBBBBB",
+		"peers": [
+			{
+				"address": "10.16.0.1:9094",
+				"name": "AAAAAAAAAAAAAAAAAAAAAAAAAA"
+			},
+			{
+				"address": "10.16.0.2:9094",
+				"name": "BBBBBBBBBBBBBBBBBBBBBBBBBB"
+			}
+		],
+		"status": "ready"
+	},
+	"versionInfo": {
+		"version":"0.19.0"
+	}
+}`,
+				},
+				{
+					uri:  "http://single.example.com/api/v2/status",
+					code: 200,
+					body: `{
+	"cluster": {
+		"name": "CCCCCCCCCCCCCCCCCCCCCCCCCC",
+		"peers": [
+			{
+				"address": "10.16.0.3:9094",
+				"name": "CCCCCCCCCCCCCCCCCCCCCCCCCC"
+			}
+		],
+		"status": "ready"
+	},
+	"versionInfo": {
+		"version":"0.21.0"
+	}
+}`,
+				},
+				{
+					uri:  "http://ha1.example.com/api/v2/alerts/groups",
+					code: 200,
+					body: "[]",
+				},
+				{
+					uri:  "http://ha1.example.com/api/v2/silences",
+					code: 200,
+					body: "[]",
+				},
+				{
+					uri:  "http://ha2.example.com/api/v2/alerts/groups",
+					code: 200,
+					body: "[]",
+				},
+				{
+					uri:  "http://ha2.example.com/api/v2/silences",
+					code: 200,
+					body: "[]",
+				},
+				{
+					uri:  "http://single.example.com/api/v2/alerts/groups",
+					code: 200,
+					body: "[]",
+				},
+				{
+					uri:  "http://single.example.com/api/v2/silences",
+					code: 200,
+					body: "[]",
+				},
+			},
+			upstreams: []config.AlertmanagerConfig{
+				{
+					Name:     "ha1",
+					URI:      "http://ha1.example.com",
+					Proxy:    false,
+					ReadOnly: false,
+					Headers:  map[string]string{},
+					CORS: config.AlertmanagerCORS{
+						Credentials: "same-site",
+					},
+					Timeout: time.Second * 10,
+				},
+				{
+					Name:     "single",
+					URI:      "http://single.example.com",
+					Proxy:    false,
+					ReadOnly: true,
+					Headers:  map[string]string{},
+					CORS: config.AlertmanagerCORS{
+						Credentials: "same-site",
+					},
+					Timeout: time.Second * 10,
+				},
+			},
+			status: models.AlertmanagerAPISummary{
+				Counters: models.AlertmanagerAPICounters{
+					Total:   2,
+					Healthy: 2,
+					Failed:  0,
+				},
+				Instances: []models.AlertmanagerAPIStatus{
+					{
+						Name:            "ha1",
+						URI:             "http://ha1.example.com",
+						PublicURI:       "http://ha1.example.com",
+						ReadOnly:        false,
+						Headers:         map[string]string{},
+						CORSCredentials: "same-site",
+						Error:           "",
+						Version:         "0.20.0",
+						Cluster:         "ha1",
+						ClusterMembers:  []string{"ha1"},
+					},
+					{
+						Name:            "single",
+						URI:             "http://single.example.com",
+						PublicURI:       "http://single.example.com",
+						ReadOnly:        true,
+						Headers:         map[string]string{},
+						CORSCredentials: "same-site",
+						Error:           "",
+						Version:         "0.21.0",
+						Cluster:         "single",
+						ClusterMembers:  []string{"single"},
+					},
+				},
+				Clusters: map[string][]string{
+					"ha1":    {"ha1"},
+					"single": {"single"},
+				},
+			},
+		},
+		{
+			Name: "Single alertmanager with unparsable metrics",
+			mocks: []mockT{
+				{
+					uri:  "http://only.example.com/metrics",
+					code: 200,
+					body: `alertmanager_build_info{version="0.20.0"`,
+				},
+				{
+					uri:  "http://only.example.com/api/v2/status",
+					code: 200,
+					body: `{
+	"cluster": {
+		"name": "AAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"peers": [
+			{
+				"address": "10.16.0.1:9094",
+				"name": "AAAAAAAAAAAAAAAAAAAAAAAAAA"
+			}
+		],
+		"status": "ready"
+	},
+	"versionInfo": {
+		"version":"0.20.0"
+	}
+}`,
+				},
+				{
+					uri:  "http://only.example.com/api/v2/alerts/groups",
+					code: 200,
+					body: "[]",
+				},
+				{
+					uri:  "http://only.example.com/api/v2/silences",
+					code: 200,
+					body: "[]",
+				},
+			},
+			upstreams: []config.AlertmanagerConfig{
+				{
+					Name:     "only",
+					URI:      "http://only.example.com",
+					Proxy:    false,
+					ReadOnly: false,
+					Headers:  map[string]string{},
+					CORS: config.AlertmanagerCORS{
+						Credentials: "same-site",
+					},
+					Timeout: time.Second * 10,
+				},
+			},
+			status: models.AlertmanagerAPISummary{
+				Counters: models.AlertmanagerAPICounters{
+					Total:   1,
+					Healthy: 1,
+					Failed:  0,
+				},
+				Instances: []models.AlertmanagerAPIStatus{
+					{
+						Name:            "only",
+						URI:             "http://only.example.com",
+						PublicURI:       "http://only.example.com",
+						ReadOnly:        false,
+						Headers:         map[string]string{},
+						CORSCredentials: "same-site",
+						Error:           "",
+						Version:         "",
+						Cluster:         "only",
+						ClusterMembers:  []string{"only"},
+					},
+				},
+				Clusters: map[string][]string{
+					"only": {"only"},
 				},
 			},
 		},
@@ -1770,22 +2360,31 @@ func TestUpstreamStatus(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.Name, func(t *testing.T) {
+			zerolog.SetGlobalLevel(zerolog.FatalLevel)
+
 			httpmock.Activate()
 			defer httpmock.DeactivateAndReset()
-			for _, m := range testCase.mocks {
-				httpmock.RegisterResponder("GET", m.uri, httpmock.NewStringResponder(m.code, m.body))
-			}
 
+			config.Config.Listen.Prefix = "/"
+			config.Config.Authentication.Header.Name = ""
+			config.Config.Authentication.BasicAuth.Users = []config.AuthenticationUser{}
+
+			apiCache, _ = lru.New(100)
 			alertmanager.UnregisterAll()
-			mockConfig()
+			upstreamSetup = false
 			config.Config.Alertmanager.Servers = testCase.upstreams
 			err := setupUpstreams()
 			if err != nil {
 				t.Error(err)
 			}
-			log.SetLevel(log.FatalLevel)
+			r := testRouter()
+			setupRouter(r, nil)
+
+			httpmock.Reset()
+			for _, m := range testCase.mocks {
+				httpmock.RegisterResponder("GET", m.uri, httpmock.NewStringResponder(m.code, m.body))
+			}
 			pullFromAlertmanager()
-			r := ginTestEngine()
 
 			req := httptest.NewRequest("GET", "/alerts.json?q=@receiver=by-cluster-service&q=alertname=HTTP_Probe_Failed&q=instance=web1", nil)
 			resp := httptest.NewRecorder()
@@ -1819,5 +2418,430 @@ func TestUpstreamStatus(t *testing.T) {
 				t.Errorf("Wrong upstream summary returned (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestGetUserFromContextMissing(t *testing.T) {
+	req := httptest.NewRequest("GET", "/alerts.json", nil)
+	user := getUserFromContext(req)
+	if user != "" {
+		t.Errorf("getUserFromContext() returned user=%q", user)
+	}
+}
+
+func TestGetUserFromContextPresent(t *testing.T) {
+	req := httptest.NewRequest("GET", "/alerts.json", nil)
+	ctx := context.WithValue(req.Context(), authUserKey("user"), "bob")
+	user := getUserFromContext(req.WithContext(ctx))
+	if user == "" {
+		t.Errorf("getUserFromContext() returned user=%q", user)
+	}
+}
+
+func TestHealthcheckAlerts(t *testing.T) {
+	type testCaseT struct {
+		healthchecks map[string][]string
+		visible      bool
+		hasError     bool
+	}
+
+	testCases := []testCaseT{
+		{
+			healthchecks: map[string][]string{},
+			hasError:     false,
+		},
+		{
+			healthchecks: map[string][]string{
+				"active": {"alertname=Host_Down"},
+			},
+			hasError: false,
+		},
+		{
+			healthchecks: map[string][]string{
+				"active": {"alertname=Host_Down"},
+			},
+			visible:  true,
+			hasError: false,
+		},
+		{
+			healthchecks: map[string][]string{
+				"active": {
+					"alertname=Host_Down",
+					"cluster=staging",
+				},
+			},
+			hasError: false,
+		},
+		{
+			healthchecks: map[string][]string{
+				"active": {"alertname=FooBar"},
+			},
+			hasError: true,
+		},
+		{
+			healthchecks: map[string][]string{
+				"active": {
+					"alertname=Host_Down",
+					"cluster=unknown",
+				},
+			},
+			hasError: true,
+		},
+	}
+
+	zerolog.SetGlobalLevel(zerolog.FatalLevel)
+	for i, testCase := range testCases {
+		for _, version := range mock.ListAllMocks() {
+			t.Run(fmt.Sprintf("%d/%s", i, version), func(t *testing.T) {
+				httpmock.Activate()
+				defer httpmock.DeactivateAndReset()
+				mockCache()
+				mock.RegisterURL("http://localhost/metrics", version, "metrics")
+				mock.RegisterURL("http://localhost/api/v2/status", version, "api/v2/status")
+				mock.RegisterURL("http://localhost/api/v2/silences", version, "api/v2/silences")
+				mock.RegisterURL("http://localhost/api/v2/alerts/groups", version, "api/v2/alerts/groups")
+
+				am, err := alertmanager.NewAlertmanager(
+					"cluster",
+					"healthchecks",
+					"http://localhost",
+					alertmanager.WithHealthchecks(testCase.healthchecks),
+					alertmanager.WithHealthchecksVisible(testCase.visible),
+				)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+
+				alertmanager.UnregisterAll()
+				upstreamSetup = false
+				err = alertmanager.RegisterAlertmanager(am)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+
+				_ = am.Pull()
+				hasError := am.Error() != ""
+				if hasError != testCase.hasError {
+					t.Errorf("error=%q expected=%v", am.Error(), testCase.hasError)
+				}
+
+				alertGroups := alertmanager.DedupAlerts()
+				for _, ag := range alertGroups {
+					for _, alert := range ag.Alerts {
+						alert := alert
+						name, hc := am.IsHealthCheckAlert(&alert)
+						if hc != nil && !testCase.visible {
+							t.Errorf("%s visible=%v but got hc alert %v", name, testCase.visible, alert)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAlertFilters(t *testing.T) {
+	type testCaseT struct {
+		filters    []string
+		alertCount int
+	}
+
+	testCases := []testCaseT{
+		{
+			filters:    []string{},
+			alertCount: 24,
+		},
+		{
+			filters:    []string{"@alertmanager=xxx"},
+			alertCount: 0,
+		},
+		{
+			filters:    []string{"@alertmanager=c1a"},
+			alertCount: 24,
+		},
+		{
+			filters:    []string{"@cluster=cluster1"},
+			alertCount: 24,
+		},
+		{
+			filters:    []string{"@cluster=cluster2"},
+			alertCount: 24,
+		},
+	}
+
+	for _, tc := range testCases {
+		var filters []string
+		for _, f := range tc.filters {
+			filters = append(filters, "q="+f)
+		}
+		q := strings.Join(filters, "&")
+		for _, version := range mock.ListAllMocks() {
+			t.Run(q, func(t *testing.T) {
+				t.Logf("Validating alerts.json response using mock files from Alertmanager %s", version)
+
+				httpmock.Activate()
+				defer httpmock.DeactivateAndReset()
+
+				mockCache()
+
+				alertmanager.UnregisterAll()
+				upstreamSetup = false
+
+				mock.RegisterURL("http://localhost/c1a/metrics", version, "metrics")
+				mock.RegisterURL("http://localhost/c1a/api/v2/status", version, "api/v2/status")
+				mock.RegisterURL("http://localhost/c1a/api/v2/silences", version, "api/v2/silences")
+				mock.RegisterURL("http://localhost/c1a/api/v2/alerts/groups", version, "api/v2/alerts/groups")
+				c1a, err := alertmanager.NewAlertmanager("cluster1", "c1a", "http://localhost/c1a")
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = alertmanager.RegisterAlertmanager(c1a)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				mock.RegisterURL("http://localhost/c1b/metrics", version, "metrics")
+				mock.RegisterURL("http://localhost/c1b/api/v2/status", version, "api/v2/status")
+				mock.RegisterURL("http://localhost/c1b/api/v2/silences", version, "api/v2/silences")
+				mock.RegisterURL("http://localhost/c1b/api/v2/alerts/groups", version, "api/v2/alerts/groups")
+				c1b, err := alertmanager.NewAlertmanager("cluster1", "c1b", "http://localhost/c1b")
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = alertmanager.RegisterAlertmanager(c1b)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				mock.RegisterURL("http://localhost/c2a/metrics", version, "metrics")
+				mock.RegisterURL("http://localhost/c2a/api/v2/status", version, "api/v2/status")
+				mock.RegisterURL("http://localhost/c2a/api/v2/silences", version, "api/v2/silences")
+				mock.RegisterURL("http://localhost/c2a/api/v2/alerts/groups", version, "api/v2/alerts/groups")
+				c2a, err := alertmanager.NewAlertmanager("cluster2", "c2a", "http://localhost/c2a")
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = alertmanager.RegisterAlertmanager(c2a)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				pullFromAlertmanager()
+
+				r := testRouter()
+				setupRouter(r, nil)
+				// re-run a few times to test the cache
+				for i := 1; i <= 3; i++ {
+					req := httptest.NewRequest("GET", fmt.Sprintf("/alerts.json?%s", q), nil)
+					resp := httptest.NewRecorder()
+					r.ServeHTTP(resp, req)
+					if resp.Code != http.StatusOK {
+						t.Errorf("GET /alerts.json returned status %d", resp.Code)
+					}
+					ur := models.AlertsResponse{}
+					body := resp.Body.Bytes()
+					err := json.Unmarshal(body, &ur)
+					if err != nil {
+						t.Errorf("Failed to unmarshal response: %s", err)
+					}
+					if ur.TotalAlerts != tc.alertCount {
+						t.Errorf("Got %d alerts, expected %d", ur.TotalAlerts, tc.alertCount)
+					}
+				}
+
+				alertmanager.UnregisterAll()
+				upstreamSetup = false
+			})
+		}
+	}
+}
+
+type gzErrWriter struct {
+	failWrite bool
+	failClose bool
+}
+
+func (ew *gzErrWriter) Write(p []byte) (n int, err error) {
+	if ew.failWrite {
+		return 0, errors.New("Write error")
+	}
+	return len(p), nil
+}
+func (ew *gzErrWriter) Close() error {
+	if ew.failClose {
+		return errors.New("Close error")
+	}
+	return nil
+}
+
+func TestCompressResponseWriteError(t *testing.T) {
+	_, err := compressResponse(nil, &gzErrWriter{failWrite: true})
+	if err == nil {
+		t.Error("compressResponse() didn't return any error")
+	}
+}
+
+func TestCompressResponseCloseError(t *testing.T) {
+	_, err := compressResponse(nil, &gzErrWriter{failClose: true})
+	if err == nil {
+		t.Error("compressResponse() didn't return any error")
+	}
+}
+
+type gzErrReader struct {
+	failAfter int
+	reads     int
+}
+
+func (er *gzErrReader) Read(p []byte) (n int, err error) {
+	if er.reads >= er.failAfter {
+		return 0, errors.New("Read error")
+	}
+	er.reads++
+
+	b, err := compressResponse([]byte("abcd"), nil)
+	if err != nil {
+		return 0, err
+	}
+
+	return bytes.NewReader(b).Read(p)
+}
+
+func TestDecompressResponseResetError(t *testing.T) {
+	_, err := decompressCachedResponse(&gzErrReader{failAfter: 0})
+	if err == nil {
+		t.Error("decompressCachedResponse() didn't return any error")
+		return
+	}
+	if err.Error() != "failed to created new compression reader: Read error" {
+		t.Errorf("decompressCachedResponse() returned wrong error: %s", err)
+	}
+}
+
+func TestDecompressResponseReadError(t *testing.T) {
+	_, err := decompressCachedResponse(&gzErrReader{failAfter: 1})
+	if err == nil {
+		t.Error("decompressCachedResponse() didn't return any error")
+		return
+	}
+	if err.Error() != "failed to decompress data: Read error" {
+		t.Errorf("decompressCachedResponse() returned wrong error: %s", err)
+	}
+}
+
+func TestAutoGrid(t *testing.T) {
+	type testCaseT struct {
+		q         string
+		gridLabel string
+		ignore    []string
+		order     []string
+	}
+
+	testCases := []testCaseT{
+		{
+			q:         "",
+			gridLabel: "",
+		},
+		{
+			q:         "gridLabel=@auto",
+			gridLabel: "job",
+		},
+		{
+			q:         "gridLabel=@auto&q=cluster!=prod",
+			gridLabel: "cluster",
+			ignore:    []string{"job"},
+			order:     []string{"cluster"},
+		},
+		{
+			q:         "gridLabel=@auto&q=cluster!=prod",
+			gridLabel: "cluster",
+			ignore:    []string{},
+			order:     []string{"cluster"},
+		},
+		{
+			q:         "gridLabel=@auto&q=cluster!=prod",
+			gridLabel: "job",
+			ignore:    []string{},
+			order:     []string{"job", "cluster"},
+		},
+		{
+			q:         "gridLabel=@auto&q=job=node_exporter",
+			gridLabel: "cluster",
+			ignore:    []string{},
+			order:     []string{"job", "cluster"},
+		},
+		{
+			q:         "gridLabel=@auto&q=cluster=dev",
+			gridLabel: "job",
+			ignore:    []string{},
+			order:     []string{"job", "cluster"},
+		},
+		{
+			q:         "gridLabel=@auto&q=cluster=dev",
+			gridLabel: "alertname",
+			ignore:    []string{},
+			order:     []string{},
+		},
+		{
+			q:         "gridLabel=job",
+			gridLabel: "job",
+		},
+		{
+			q:         "gridLabel=@auto&q=instance=server5",
+			gridLabel: "job",
+			ignore:    []string{"alertname"},
+		},
+		{
+			q:         "gridLabel=@auto&q=job=node_exporter",
+			gridLabel: "cluster",
+			ignore:    []string{"alertname"},
+		},
+		{
+			q:         "gridLabel=@auto&q=cluster=prod",
+			gridLabel: "job",
+			ignore:    []string{"alertname", "instance"},
+		},
+	}
+
+	defer func() {
+		config.Config.Grid.Auto.Ignore = []string{}
+		config.Config.Grid.Auto.Order = []string{}
+	}()
+
+	mockConfig()
+	for _, tc := range testCases {
+		config.Config.Grid.Auto.Ignore = tc.ignore
+		config.Config.Grid.Auto.Order = tc.order
+		for _, version := range mock.ListAllMocks() {
+			t.Logf("Testing alerts using mock files from Alertmanager %s", version)
+			mockAlerts(version)
+			r := testRouter()
+			setupRouter(r, nil)
+			// re-run a few times to test the cache
+			for i := 1; i <= 3; i++ {
+				req := httptest.NewRequest("GET", fmt.Sprintf("/alerts.json?%s", tc.q), nil)
+				resp := httptest.NewRecorder()
+				r.ServeHTTP(resp, req)
+				if resp.Code != http.StatusOK {
+					t.Errorf("GET /alerts.json returned status %d", resp.Code)
+				}
+
+				ur := models.AlertsResponse{}
+				err := json.Unmarshal(resp.Body.Bytes(), &ur)
+				if err != nil {
+					t.Errorf("Failed to unmarshal response: %s", err)
+				}
+				if len(ur.Grids) == 0 {
+					t.Errorf("[%s] Got empty grid list", tc.q)
+				}
+				for _, g := range ur.Grids {
+					if g.LabelName != tc.gridLabel {
+						t.Errorf("[%s] Got grid using label %s=%s, expected %s", tc.q, g.LabelName, g.LabelValue, tc.gridLabel)
+					}
+				}
+			}
+		}
 	}
 }

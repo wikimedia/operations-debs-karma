@@ -48,7 +48,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -79,7 +79,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -112,7 +112,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -129,7 +129,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -146,7 +146,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -179,7 +179,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateSuppressed,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{"168f139d-77e4-41d6-afb5-8fe2cfd0cc9d"},
 					},
 				},
@@ -197,7 +197,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateSuppressed,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{"168f139d-77e4-41d6-afb5-8fe2cfd0cc9d", "378eaa69-097d-41c4-a8c2-fe6568c3abfc"},
 					},
 				},
@@ -215,7 +215,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateSuppressed,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{"168f139d-77e4-41d6-afb5-8fe2cfd0cc9d"},
 					},
 				},
@@ -255,7 +255,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -274,7 +274,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -293,7 +293,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -312,7 +312,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -331,7 +331,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -350,7 +350,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateSuppressed,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{"168f139d-77e4-41d6-afb5-8fe2cfd0cc9d"},
 					},
 				},
@@ -369,7 +369,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateSuppressed,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{"168f139d-77e4-41d6-afb5-8fe2cfd0cc9d", "378eaa69-097d-41c4-a8c2-fe6568c3abfc"},
 					},
 				},
@@ -388,7 +388,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateSuppressed,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{"168f139d-77e4-41d6-afb5-8fe2cfd0cc9d"},
 					},
 				},
@@ -419,7 +419,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -455,7 +455,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -472,7 +472,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -507,7 +507,7 @@ var groupTests = []groupTest{
 					{
 						Name:   "default",
 						State:  models.AlertStateSuppressed,
-						Source: "localhost/prometheus",
+						Source: "http://localhost/prometheus",
 					},
 				},
 				Labels: map[string]string{
@@ -523,7 +523,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -557,7 +557,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -595,7 +595,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateSuppressed,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{"0804764c-6163-4c64-b0a9-08feebe2db4b"},
 					},
 				},
@@ -612,7 +612,7 @@ var groupTests = []groupTest{
 					{
 						Name:       "default",
 						State:      models.AlertStateActive,
-						Source:     "localhost/prometheus",
+						Source:     "http://localhost/prometheus",
 						SilencedBy: []string{},
 					},
 				},
@@ -991,8 +991,9 @@ func TestVerifyAllGroups(t *testing.T) {
 	for _, version := range mock.ListAllMocks() {
 		t.Logf("Testing API using mock files from Alertmanager %s", version)
 		mockAlerts(version)
-		apiCache.Flush()
-		r := ginTestEngine()
+		apiCache.Purge()
+		r := testRouter()
+		setupRouter(r, nil)
 		req := httptest.NewRequest("GET", "/alerts.json", nil)
 		resp := httptest.NewRecorder()
 		r.ServeHTTP(resp, req)
@@ -1231,10 +1232,11 @@ func TestSortOrder(t *testing.T) {
 		for i := 1; i <= 3; i++ {
 			t.Logf("Testing API using mock files from Alertmanager %s [try %d]", version, i)
 			mockAlerts(version)
-			r := ginTestEngine()
+			r := testRouter()
+			setupRouter(r, nil)
 
 			for _, testCase := range sortTests {
-				apiCache.Flush()
+				apiCache.Purge()
 				config.Config.Grid.Sorting.Reverse = testCase.defaultSortReverse
 				uri := fmt.Sprintf(
 					"/alerts.json?sortOrder=%s&sortLabel=%s&sortReverse=%s&%s",
@@ -1281,6 +1283,76 @@ func TestSortOrder(t *testing.T) {
 					if diff := cmp.Diff(testCase.expectedValues, values); diff != "" {
 						t.Errorf("Incorrectly sorted values (-want +got):\n%s", diff)
 					}
+				}
+			}
+		}
+	}
+}
+
+func verifyStrippedLabels(t *testing.T, labels map[string]string, keep, strip []string) {
+	for _, l := range strip {
+		if val, ok := labels[l]; ok {
+			t.Errorf("Found stripped label %s=%s on %v", l, val, labels)
+		}
+	}
+	if len(keep) > 0 && len(strip) == 0 {
+		for k, v := range labels {
+			ok := false
+			for _, l := range keep {
+				if k == l {
+					ok = true
+				}
+			}
+			if !ok {
+				t.Errorf("Found label %s=%s that's not on the keep list: %v", k, v, keep)
+			}
+		}
+	}
+}
+
+func TestStripLabels(t *testing.T) {
+	type testCaseT struct {
+		keep  []string
+		strip []string
+	}
+
+	testCases := []testCaseT{
+		{keep: []string{}, strip: []string{}},
+		{keep: []string{}, strip: []string{"alertname"}},
+		{keep: []string{"alertname"}, strip: []string{}},
+	}
+
+	mockConfig()
+	for _, version := range mock.ListAllMocks() {
+		t.Logf("Testing API using mock files from Alertmanager %s", version)
+		mockAlerts(version)
+		r := testRouter()
+		setupRouter(r, nil)
+
+		for _, testCase := range testCases {
+			config.Config.Labels.Keep = testCase.keep
+			config.Config.Labels.Strip = testCase.strip
+			apiCache.Purge()
+			req := httptest.NewRequest("GET", "/alerts.json", nil)
+			resp := httptest.NewRecorder()
+			r.ServeHTTP(resp, req)
+			if resp.Code != http.StatusOK {
+				t.Errorf("GET /alerts.json returned status %d", resp.Code)
+			}
+
+			ur := models.AlertsResponse{}
+			err := json.Unmarshal(resp.Body.Bytes(), &ur)
+			if err != nil {
+				t.Errorf("Failed to unmarshal response: %s", err)
+			}
+
+			for _, grid := range ur.Grids {
+				for _, ag := range grid.AlertGroups {
+					for _, alert := range ag.Alerts {
+						verifyStrippedLabels(t, alert.Labels, testCase.keep, testCase.strip)
+					}
+					verifyStrippedLabels(t, ag.Labels, testCase.keep, testCase.strip)
+					verifyStrippedLabels(t, ag.Shared.Labels, testCase.keep, testCase.strip)
 				}
 			}
 		}

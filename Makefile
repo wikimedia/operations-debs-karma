@@ -5,9 +5,8 @@ include make/docker.mk
 include make/lint-versions.mk
 
 .PHONY: lint
-lint: lint-versions
+lint: lint-bootstrap-version
 	make -C ui lint-js
-	make -C ui lint-docs
 
 .PHONY: test
 test: lint
@@ -16,7 +15,7 @@ test: lint
 
 .PHONY: clean
 clean:
-	rm -fr cmd/karma/bindata_assetfs.go $(NAME) $(NAME)-* ui/build ui/node_modules coverage.txt
+	rm -fr $(NAME) $(NAME)-* ui/build ui/node_modules coverage.txt
 
 .PHONY: show-version
 show-version:

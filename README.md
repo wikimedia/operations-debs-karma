@@ -5,10 +5,7 @@ Alert dashboard for
 
 ---
 
-Starting with karma v0.56 only Alertmanager V2 API is supported, which
-requires Alertmanager `>=0.17.0`.
-
-Alertmanager `>=0.19.0` is recommended as older versions might not show all
+Alertmanager `>=0.19.0` is required as older versions might not show all
 receivers in karma, see
 [issue #812](https://github.com/prymitive/karma/issues/812) for details.
 
@@ -56,6 +53,23 @@ Each individual alert will show unique labels and annotations. Labels
 and annotations that are shared between all alerts are moved to the footer.
 
 ![Example](/docs/img/alertGroup.png)
+
+#### Alert history
+
+Alertmanager doesn't currently provide any long term storage of alert events
+or a way to query for historical alerts, but each Prometheus server sending
+alerts stores metrics related to triggered alerts.
+When `history:enabled` is `true` karma will use `source` fields from each alert
+to try querying alert related metrics on remote Prometheus servers.
+The result is the number of times given alert group triggered an alert per hour
+in the last 24h, displayed as 24 blocks. The darker the color the more alerts
+were triggered in that hour, as compared by all other hours.
+
+![Example](/docs/img/alertHistory.png)
+
+For this feature to work karma must be able to connect to all Prometheus servers
+sending alerts. Be sure to set `--web.external-url` Prometheus flag to a publicly
+reachable URL of each server.
 
 #### Inhibited alerts
 
@@ -113,6 +127,15 @@ only after all alerts are resolved you can use
 See [configuration docs](/docs/CONFIGURATION.md#alert-acknowledgement) for
 details.
 
+### Dead Man’s Switch support
+
+Starting with `v0.78` karma can be configured to check for
+[Dead Man’s Switch](https://en.wikipedia.org/wiki/Dead_man%27s_switch)
+style alerts (alert that is always firing). If no alert is found in given
+alertmanager karma will show an error in the UI.
+See `healthcheck:filters` option on [configuration docs](/docs/CONFIGURATION.md#alertmanagers)
+for details.
+
 ### Dark mode
 
 Starting with `v0.52` release karma includes both light and dark themes.
@@ -124,7 +147,7 @@ media queries.
 
 ## Demo
 
-[Online demo](https://karma-demo.herokuapp.com/) is running latest master branch
+[Online demo](https://karma-demo.herokuapp.com/) is running latest main branch
 or PR branch version. It might include features that are experimental and not
 yet ready to be included.
 
@@ -232,27 +255,27 @@ By default it will listen on port `8080` and will have mock alerts.
 ### Running pre-build docker image
 
 Official docker images are built and hosted on
-[hub.docker.com](https://hub.docker.com/r/lmierzwa/karma/).
+[Github](https://github.com/users/prymitive/packages/container/package/karma).
 
 Images are built automatically for:
 
-- release tags in git - `lmierzwa/karma:vX.Y.Z`
-- master branch commits - `lmierzwa/karma:latest`
+- release tags in git - `ghcr.io/prymitive/karma:vX.Y.Z`
+- main branch commits - `ghcr.io/prymitive/karma:latest`
 
 #### Examples
 
 To start a release image run:
 
-    docker run -e ALERTMANAGER_URI=https://alertmanager.example.com lmierzwa/karma:vX.Y.Z
+    docker run -e ALERTMANAGER_URI=https://alertmanager.example.com ghcr.io/prymitive/karma:vX.Y.Z
 
 Latest release details can be found on
 [GitHub](https://github.com/prymitive/karma/releases).
 
-To start docker image build from lastet master branch run:
+To start docker image build from lastet main branch run:
 
-    docker run -e ALERTMANAGER_URI=https://alertmanager.example.com lmierzwa/karma:latest
+    docker run -e ALERTMANAGER_URI=https://alertmanager.example.com ghcr.io/prymitive/karma:latest
 
-Note that latest master branch might have bugs or breaking changes. Using
+Note that latest main branch might have bugs or breaking changes. Using
 release images is strongly recommended for any production use.
 
 ### Building a Docker image

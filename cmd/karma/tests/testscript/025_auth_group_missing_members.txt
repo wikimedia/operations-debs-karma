@@ -1,0 +1,19 @@
+# Raises an error if authorization group is missing name
+karma.bin-should-fail --check-config
+! stdout .
+cmp stderr stderr.txt
+
+-- stderr.txt --
+level=error msg="Execution failed" error="'members' is required for every authorization group"
+-- karma.yaml --
+authentication:
+  header:
+    name: "X-User"
+    value_re: "(.+)"
+authorization:
+  groups:
+    - name: admins
+alertmanager:
+  servers:
+    - name: default
+      uri: https://127.0.0.1:9093

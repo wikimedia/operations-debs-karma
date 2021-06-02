@@ -1,4 +1,0 @@
-# Doesn't log any timestamp when log.timestamp is set to false
-karma.bin-should-fail --log.format=text --log.level=error --log.timestamp=false
-! stdout .
-stderr '^level=error msg="No valid Alertmanager URIs defined"'

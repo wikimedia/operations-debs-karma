@@ -5,6 +5,16 @@
   cursor: text;
 }
 
+.cursor-help {
+  cursor: help;
+}
+
 .mw-1p {
   min-width: 1%;
+}
+
+.components-hour h2,
+.components-minute h2,
+.components-duration h2 {
+  font-size: 2.5rem;
 }

@@ -1,32 +1,27 @@
-.components-animation-slide {
-  will-change: opacity, height;
-  transform: translateZ(0);
-}
+$duration: 0.15s;
 
 .components-animation-slide-enter,
 .components-animation-slide-appear {
-  opacity: 0.25;
-  overflow: hidden;
-  max-height: 0px;
+  opacity: 0;
+  transform: scale(0.95) translateY(-0.25em);
 }
 .components-animation-slide-enter-active,
 .components-animation-slide-appear-active {
-  max-height: 2000px; /* can't use auto here */
   opacity: 1;
-  transition-property: max-height, opacity;
-  transition-duration: 0.15s;
+  transform: scale(1) translateY(0);
+  transition-property: transform;
+  transition-duration: $duration;
   transition-timing-function: ease-out;
 }
 
 .components-animation-slide-exit {
-  max-height: 2000px; /* can't use auto here */
   opacity: 1;
+  transform: scale(1) translateY(0);
 }
 .components-animation-slide-exit-active {
-  opacity: 0.25;
-  overflow: hidden;
-  max-height: 0px;
-  transition-property: max-height, opacity;
-  transition-duration: 0.15s;
+  opacity: 0;
+  transform: scale(0.95) translateY(-0.25em);
+  transition-property: opacity, transform;
+  transition-duration: $duration;
   transition-timing-function: ease-out;
 }

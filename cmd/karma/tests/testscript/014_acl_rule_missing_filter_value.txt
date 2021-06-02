@@ -1,0 +1,39 @@
+# Raises an error if silence ACL rule uses filter with missing value or value_re
+karma.bin-should-fail --check-config
+! stdout .
+cmp stderr stderr.txt
+
+-- stderr.txt --
+level=info msg="Reading configuration file" path=karma.yaml
+level=info msg="Version: dev"
+level=info msg="Configured Alertmanager source" name=default proxy=false readonly=false uri=https://127.0.0.1:9093
+level=info msg="Reading silence ACL config file" path=acl.yaml
+level=error msg="Execution failed" error="invalid silence ACL rule at position 0: silence ACL rule filter requires 'value' or 'value_re' to be set"
+-- karma.yaml --
+authentication:
+  header:
+    name: "X-User"
+    value_re: "(.+)"
+authorization:
+  groups:
+    - name: admins
+      members:
+        - alice
+        - bob
+    - name: users
+      members:
+        - john
+  acl:
+    silences: acl.yaml
+alertmanager:
+  servers:
+    - name: default
+      uri: https://127.0.0.1:9093
+
+-- acl.yaml --
+rules:
+  - action: block
+    reason: missing value
+    scope:
+      filters:
+        - name: cluster

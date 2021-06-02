@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +13,7 @@ import (
 	"time"
 
 	"github.com/prymitive/karma/internal/uri"
-
-	log "github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 type httpTransportTest struct {
@@ -100,7 +100,7 @@ func readAll(source io.ReadCloser) (int64, error) {
 		got, err := source.Read(b)
 		readSize += int64(got)
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return readSize, nil
 			}
 			return readSize, err
@@ -109,7 +109,7 @@ func readAll(source io.ReadCloser) (int64, error) {
 }
 
 func TestHTTPReader(t *testing.T) {
-	log.SetLevel(log.FatalLevel)
+	zerolog.SetGlobalLevel(zerolog.FatalLevel)
 	for _, testCase := range httpTransportTests {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {

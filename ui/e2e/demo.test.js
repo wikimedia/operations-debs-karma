@@ -5,7 +5,7 @@ let page;
 
 describe("Demo", () => {
   beforeAll(async () => {
-    jest.setTimeout(10000);
+    jest.setTimeout(30000);
 
     browser = await puppeteer.launch();
   });
@@ -48,6 +48,9 @@ describe("Demo", () => {
 
     await page.click("div.cursor-pointer.navbar-brand");
 
+    await page.waitForSelector(
+      "div.modal-open.components-animation-modal-enter-done"
+    );
     await page.waitForSelector("div.modal-content");
     await page.waitForSelector(".components-labelWithPercent-percent");
 
@@ -59,7 +62,7 @@ describe("Demo", () => {
     });
     await expect(labels.length).toBeGreaterThan(10);
 
-    await page.click(".modal-header > button.close");
+    await page.click(".modal-header > button.btn-close");
   });
 
   it("opens silence modal on click", async () => {
@@ -67,10 +70,13 @@ describe("Demo", () => {
 
     await page.click("#components-new-silence");
 
+    await page.waitForSelector(
+      "div.modal-open.components-animation-modal-enter-done"
+    );
     await page.waitForSelector("div.modal-content");
     await page.waitForSelector(".modal-body > form");
 
-    await page.click(".modal-header > nav > button.close");
+    await page.click(".modal-header > nav > button.btn-close");
   });
 
   it("opens settings modal on click", async () => {
@@ -78,9 +84,12 @@ describe("Demo", () => {
 
     await page.click("#components-settings");
 
+    await page.waitForSelector(
+      "div.modal-open.components-animation-modal-enter-done"
+    );
     await page.waitForSelector("div.modal-content");
-    await page.waitForSelector(".modal-body > form.accordion");
+    await page.waitForSelector(".modal-body > div.accordion");
 
-    await page.click(".modal-header > nav > button.close");
+    await page.click(".modal-header > nav > button.btn-close");
   });
 });

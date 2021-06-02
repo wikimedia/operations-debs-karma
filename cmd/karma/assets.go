@@ -1,113 +1,79 @@
 package main
 
 import (
-	"errors"
-	"fmt"
-	"html/template"
+	"io"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
-
-	assetfs "github.com/elazarl/go-bindata-assetfs"
-	log "github.com/sirupsen/logrus"
+	"github.com/prymitive/karma/ui"
+	"github.com/rs/zerolog/log"
 )
 
-type binaryFileSystem struct {
-	fs http.FileSystem
+func contentText(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 }
 
-func (b *binaryFileSystem) Open(name string) (http.File, error) {
-	return b.fs.Open(name)
-}
-
-func (b *binaryFileSystem) Exists(prefix string, filepath string) bool {
-	if p := strings.TrimPrefix(filepath, prefix); len(p) < len(filepath) {
-		if _, err := b.fs.Open(p); err != nil {
-			// file does not exist
-			return false
+func serveFileOr404(path string, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		if path == "" {
+			w.Header().Set("Content-Type", contentType)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte{})
+			return
 		}
-		// file exist
-		return true
+		data, err := os.ReadFile(path)
+		if err != nil {
+			contentText(w)
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
 	}
-	// file path doesn't start with fs prefix, so this file isn't stored here
-	return false
 }
 
-func newBinaryFileSystem(root string) *binaryFileSystem {
-	fs := &assetfs.AssetFS{
-		Asset: Asset,
-		// Don't render directory index, return 404 for /static/ requests)
-		AssetDir: func(path string) ([]string, error) {
-			return nil, errors.New("not found")
-		},
-		Prefix: root,
-	}
-	return &binaryFileSystem{fs}
-}
+func serverStaticFiles(prefix, root string) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fixedPath := strings.TrimPrefix(r.URL.Path, prefix)
+			filePath := strings.TrimSuffix(root, "/") + "/" + strings.TrimPrefix(fixedPath, "/")
 
-// load a template from binary asset resource
-func loadTemplate(t *template.Template, path string) *template.Template {
-	templateContent, err := Asset(path)
-	if err != nil {
-		log.Fatal(err)
-	}
+			log.Debug().Str("path", r.URL.Path).Str("root", root).Str("prefix", prefix).Str("filePath", filePath).Msg("Static file request")
 
-	var tmpl *template.Template
-	if t == nil {
-		// if template wasn't yet initialized do it here
-		t = template.New(path)
-	}
+			if !strings.HasPrefix(r.URL.Path, prefix) {
+				log.Debug().Str("path", r.URL.Path).Str("prefix", prefix).Msg("Ignoring static file request")
+				next.ServeHTTP(w, r)
+				return
+			}
 
-	if path == t.Name() {
-		tmpl = t
-	} else {
-		// if we already have an instance of template.Template then
-		// add a new file to it
-		tmpl = t.New(path)
-	}
+			fl, err := ui.StaticFiles.Open(filePath)
+			if err != nil {
+				log.Debug().Str("path", r.URL.Path).Msg("Static file not found")
+				next.ServeHTTP(w, r)
+				return
+			}
+			defer fl.Close()
+			log.Debug().Str("path", r.URL.Path).Msg("Static file found")
 
-	_, err = tmpl.Parse(string(templateContent))
-	if err != nil {
-		log.Fatal(err)
-		return nil
-	}
+			ct := mime.TypeByExtension(filepath.Ext(filePath))
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			w.Header().Set("Content-Type", ct)
 
-	return t
-}
-
-func serveFileOr404(path string, contentType string, c *gin.Context) {
-	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-	if path == "" {
-		c.Data(200, contentType, nil)
-		return
-	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		c.Data(404, contentType, []byte(fmt.Sprintf("%s not found", path)))
-		return
-	}
-	c.File(path)
-}
-
-func setStaticHeaders(prefix string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, prefix) {
-			c.Header("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
 			expiresTime := time.Now().AddDate(0, 0, 365).Format(http.TimeFormat)
-			c.Header("Expires", expiresTime)
-			c.Next()
-		}
-	}
-}
+			w.Header().Set("Expires", expiresTime)
 
-func clearStaticHeaders(prefix string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, prefix) {
-			c.Header("Cache-Control", "")
-			c.Header("Expires", "")
-			c.Next()
-		}
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.Copy(w, fl)
+		})
 	}
 }

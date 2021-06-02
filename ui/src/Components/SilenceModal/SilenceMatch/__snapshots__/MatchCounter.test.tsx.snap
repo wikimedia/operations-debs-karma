@@ -1,0 +1,14 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`<MatchCounter /> matches snapshot 1`] = `
+"
+<div class=\\" tooltip-trigger\\">
+  <span class=\\"badge bg-light rounded-pill d-block\\"
+        style=\\"font-size: 85%; line-height: 1rem;\\"
+        data-am=\\"0\\"
+  >
+    25
+  </span>
+</div>
+"
+`;

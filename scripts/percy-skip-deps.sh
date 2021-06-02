@@ -4,16 +4,19 @@ set -o errexit
 set -o pipefail
 
 
-if [ "${TRAVIS_BRANCH}" == "master" ] && [ -n ${TRAVIS_COMMIT_RANGE} ]; then
-  RANGE="${TRAVIS_COMMIT_RANGE}"
+if [ "${GITHUB_HEAD_REF_SLUG}" == "main" ]; then
+  RANGE="HEAD~.."
 else
-  git fetch origin master
-  RANGE="FETCH_HEAD...${TRAVIS_COMMIT}"
+  git fetch origin main
+  RANGE="FETCH_HEAD...${GITHUB_SHA}"
 fi
 
 
 git log --no-merges --name-only --pretty=format: ${RANGE} | grep -Ev '^$' | sort | uniq | while read FILE ; do
   if [[ "${FILE}" =~ ^ui/src/.+ ]]; then
+    echo "[P] ${FILE}"
+    exit 1
+  elif [[ "${FILE}" =~ ^ui/.storybook/.+ ]]; then
     echo "[P] ${FILE}"
     exit 1
   elif [[ "${FILE}" == "ui/package.json" ]]; then

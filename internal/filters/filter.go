@@ -3,6 +3,7 @@ package filters
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/prymitive/karma/internal/models"
 	"github.com/prymitive/karma/internal/slices"
@@ -67,7 +68,7 @@ func (filter *alertFilter) GetMatcher() string {
 }
 
 func (filter *alertFilter) GetValue() string {
-	return fmt.Sprintf("%s", filter.Value)
+	return fmt.Sprintf("%v", filter.Value)
 }
 
 func (filter *alertFilter) GetIsAlertmanagerFilter() bool {
@@ -80,12 +81,18 @@ type newFilterFactory func() FilterT
 // expression will be parsed and best filter implementation and value matcher
 // will be selected
 func NewFilter(expression string) FilterT {
+	trimmed := strings.Trim(expression, " \t")
+
 	invalid := alwaysInvalidFilter{}
-	invalid.init("", nil, expression, false, expression)
+	invalid.init("", nil, trimmed, false, trimmed)
+
+	if trimmed == "" {
+		return &invalid
+	}
 
 	reExp := fmt.Sprintf("^(?P<matched>(%s))(?P<operator>(%s))(?P<value>(.*))", filterRegex, matcherRegex)
 	re := regexp.MustCompile(reExp)
-	match := re.FindStringSubmatch(expression)
+	match := re.FindStringSubmatch(trimmed)
 	result := make(map[string]string)
 	for i, name := range re.SubexpNames() {
 		if name != "" && i > 0 && i <= len(match) {
@@ -101,7 +108,7 @@ func NewFilter(expression string) FilterT {
 		// no "filter=" part, just the value, use fuzzy filter
 		f := newFuzzyFilter()
 		matcher, _ := newMatcher(regexpOperator)
-		f.init("", &matcher, expression, true, expression)
+		f.init("", &matcher, trimmed, true, trimmed)
 		return f
 	}
 
@@ -122,7 +129,7 @@ func NewFilter(expression string) FilterT {
 		}
 		// we validate operator above, no need to re-check
 		matcher, _ := newMatcher(operator)
-		f.init(matched, &matcher, expression, true, value)
+		f.init(matched, &matcher, trimmed, true, value)
 		return f
 	}
 

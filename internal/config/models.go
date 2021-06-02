@@ -9,11 +9,17 @@ type AlertmanagerCORS struct {
 	Credentials string
 }
 
+type AlertmanagerHealthcheck struct {
+	Visible bool                `yaml:"visible" koanf:"visible"`
+	Filters map[string][]string `yaml:"filters" koanf:"filters"`
+}
+
 type AlertmanagerConfig struct {
 	Cluster     string
 	Name        string
 	URI         string
 	ExternalURI string `yaml:"external_uri" koanf:"external_uri"`
+	ProxyURL    string `yaml:"proxy_url" koanf:"proxy_url"`
 	Timeout     time.Duration
 	Proxy       bool
 	ReadOnly    bool `yaml:"readonly"`
@@ -23,8 +29,9 @@ type AlertmanagerConfig struct {
 		Key                string
 		InsecureSkipVerify bool `yaml:"insecureSkipVerify" koanf:"insecureSkipVerify"`
 	}
-	Headers map[string]string
-	CORS    AlertmanagerCORS `yaml:"cors" koanf:"cors"`
+	Headers     map[string]string
+	CORS        AlertmanagerCORS        `yaml:"cors" koanf:"cors"`
+	Healthcheck AlertmanagerHealthcheck `yaml:"healthcheck" koanf:"healthcheck"`
 }
 
 type LinkDetectRules struct {
@@ -49,6 +56,12 @@ type AuthenticationUser struct {
 type AuthorizationGroup struct {
 	Name    string
 	Members []string
+}
+
+type HistoryRewrite struct {
+	Source      string         `yaml:"source"`
+	SourceRegex *regexp.Regexp `yaml:"-"`
+	URI         string         `yaml:"uri"`
 }
 
 type configSchema struct {
@@ -76,25 +89,28 @@ type configSchema struct {
 		Timeout     time.Duration    `yaml:"-" koanf:"timeout"`
 		URI         string           `yaml:"-" koanf:"uri"`
 		ExternalURI string           `yaml:"-" koanf:"external_uri"`
+		ProxyURL    string           `yaml:"-" koanf:"proxy_url"`
 		Proxy       bool             `yaml:"-" koanf:"proxy"`
 		ReadOnly    bool             `yaml:"-" koanf:"readonly"`
 		CORS        AlertmanagerCORS `yaml:"-" koanf:"cors"`
 	}
 	AlertAcknowledgement struct {
-		Enabled       bool
-		Duration      time.Duration
-		Author        string
-		CommentPrefix string `yaml:"commentPrefix" koanf:"commentPrefix"`
+		Enabled  bool
+		Duration time.Duration
+		Author   string
+		Comment  string
 	} `yaml:"alertAcknowledgement" koanf:"alertAcknowledgement"`
 	Annotations struct {
 		Default struct {
 			Hidden bool
 		}
-		Hidden  []string
-		Visible []string
-		Keep    []string
-		Strip   []string
-		Order   []string
+		Hidden             []string
+		Visible            []string
+		Keep               []string
+		Strip              []string
+		Order              []string
+		Actions            []string
+		EnableInsecureHTML bool `yaml:"enableInsecureHTML" koanf:"enableInsecureHTML"`
 	}
 	Custom struct {
 		CSS string
@@ -113,7 +129,17 @@ type configSchema struct {
 				Labels map[string]map[string]string
 			} `yaml:"customValues" koanf:"customValues"`
 		}
+		Auto struct {
+			Ignore []string
+			Order  []string
+		}
 	} `yaml:"grid"`
+	History struct {
+		Enabled bool
+		Workers int
+		Timeout time.Duration
+		Rewrite []HistoryRewrite
+	}
 	Karma struct {
 		Name string
 	}
@@ -128,13 +154,22 @@ type configSchema struct {
 	}
 	Listen struct {
 		Address string
-		Port    int
-		Prefix  string
+		Timeout struct {
+			Read  time.Duration
+			Write time.Duration
+		}
+		TLS struct {
+			Cert string
+			Key  string
+		}
+		Port   int
+		Prefix string
 	}
 	Log struct {
 		Config    bool
 		Level     string
 		Format    string
+		Requests  bool
 		Timestamp bool
 	}
 	Receivers struct {
@@ -162,6 +197,7 @@ type configSchema struct {
 		HideFiltersWhenIdle  bool   `yaml:"hideFiltersWhenIdle" koanf:"hideFiltersWhenIdle"`
 		ColorTitlebar        bool   `yaml:"colorTitlebar" koanf:"colorTitlebar"`
 		Theme                string `yaml:"theme" koanf:"theme"`
+		Animations           bool   `yaml:"animations" koanf:"animations"`
 		MinimalGroupWidth    int    `yaml:"minimalGroupWidth" koanf:"minimalGroupWidth"`
 		AlertsPerGroup       int    `yaml:"alertsPerGroup" koanf:"alertsPerGroup"`
 		CollapseGroups       string `yaml:"collapseGroups" koanf:"collapseGroups"`

@@ -1,11 +1,6 @@
-import React, {
-  Component,
-  StatelessComponent,
-  ReactNode,
-  ErrorInfo,
-} from "react";
+import { Component, FC, ReactNode, ErrorInfo } from "react";
 
-import * as Sentry from "@sentry/browser";
+import { captureException } from "@sentry/browser";
 
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faBomb } from "@fortawesome/free-solid-svg-icons/faBomb";
@@ -16,11 +11,11 @@ interface InternalErrorProps {
   progressLeft: number;
 }
 
-const InternalError: StatelessComponent<InternalErrorProps> = (props) => (
+const InternalError: FC<InternalErrorProps> = (props) => (
   <div className="text-placeholder screen-center">
     <div className="container-fluid text-center">
       <h1 className="display-1">
-        <FontAwesomeIcon className="text-danger mr-4" icon={faBomb} />
+        <FontAwesomeIcon className="text-danger me-4" icon={faBomb} />
         <span className="text-muted">Internal error</span>
       </h1>
       <p className="lead text-white bg-secondary p-3 rounded text-wrap text-break">
@@ -67,7 +62,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     this.timer = null;
   }
 
-  reloadApp = () => {
+  reloadApp = (): void => {
     if (this.state.reloadSeconds <= 1) {
       window.location.reload();
     } else {
@@ -75,12 +70,13 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     }
   };
 
-  componentDidCatch(error: Error | null, errorInfo: ErrorInfo) {
-    this.setState({ cachedError: error });
-    Sentry.withScope((scope) => {
-      scope.setExtras(errorInfo);
-      Sentry.captureException(error);
-    });
+  componentDidCatch(error: Error, { componentStack }: ErrorInfo): void {
+    if (this.state.cachedError === null) {
+      this.setState({ cachedError: error });
+      captureException(error, {
+        contexts: { react: { componentStack } },
+      });
+    }
     // reload after 60s, this is to fix wall monitors automatically
     // but only if the timer isn't set yet
     if (this.timer === null) {
@@ -88,7 +84,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     }
   }
 
-  render() {
+  render(): ReactNode {
     if (this.state.cachedError !== null) {
       return (
         <InternalError

@@ -3,29 +3,27 @@ package main
 import (
 	"fmt"
 	"math"
+	"net/http"
 	"sort"
 
-	"github.com/gin-gonic/gin"
-	"vbom.ml/util/sortorder"
+	"github.com/fvbommel/sortorder"
+	"github.com/rs/zerolog/log"
 
 	"github.com/prymitive/karma/internal/alertmanager"
 	"github.com/prymitive/karma/internal/config"
 	"github.com/prymitive/karma/internal/filters"
 	"github.com/prymitive/karma/internal/models"
+	"github.com/prymitive/karma/internal/slices"
 	"github.com/prymitive/karma/internal/uri"
 )
 
-func getFiltersFromQuery(filterStrings []string) ([]filters.FilterT, bool) {
-	validFilters := false
+func getFiltersFromQuery(filterStrings []string) []filters.FilterT {
 	matchFilters := []filters.FilterT{}
 	for _, filterExpression := range filterStrings {
 		f := filters.NewFilter(filterExpression)
-		if f.GetIsValid() {
-			validFilters = true
-		}
 		matchFilters = append(matchFilters, f)
 	}
-	return matchFilters, validFilters
+	return matchFilters
 }
 
 func countLabel(countStore map[string]map[string]int, key string, val string) {
@@ -122,7 +120,7 @@ func getUpstreams() models.AlertmanagerAPISummary {
 		summary.Instances = append(summary.Instances, u)
 
 		summary.Counters.Total++
-		if u.Error == "" {
+		if upstream.IsHealthy() {
 			summary.Counters.Healthy++
 		} else {
 			summary.Counters.Failed++
@@ -166,13 +164,13 @@ func sortByStartsAt(i, j int, groups []models.APIAlertGroup, sortReverse bool) b
 	return groups[i].LatestStartsAt.Before(groups[j].LatestStartsAt)
 }
 
-func getSortOptions(c *gin.Context) (string, string, string) {
-	sortOrder, found := c.GetQuery("sortOrder")
+func getSortOptions(r *http.Request) (string, string, string) {
+	sortOrder, found := lookupQueryString(r, "sortOrder")
 	if !found || sortOrder == "" {
 		sortOrder = config.Config.Grid.Sorting.Order
 	}
 
-	sortReverse, found := c.GetQuery("sortReverse")
+	sortReverse, found := lookupQueryString(r, "sortReverse")
 	if !found || (sortReverse != "0" && sortReverse != "1") {
 		if config.Config.Grid.Sorting.Reverse {
 			sortReverse = "1"
@@ -181,7 +179,7 @@ func getSortOptions(c *gin.Context) (string, string, string) {
 		}
 	}
 
-	sortLabel, found := c.GetQuery("sortLabel")
+	sortLabel, found := lookupQueryString(r, "sortLabel")
 	if !found || sortLabel == "" {
 		sortLabel = config.Config.Grid.Sorting.Label
 	}
@@ -189,8 +187,8 @@ func getSortOptions(c *gin.Context) (string, string, string) {
 	return sortOrder, sortReverse, sortLabel
 }
 
-func sortAlertGroups(c *gin.Context, groups []models.APIAlertGroup) []models.APIAlertGroup {
-	sortOrder, sortReverse, sortLabel := getSortOptions(c)
+func sortAlertGroups(r *http.Request, groups []models.APIAlertGroup) []models.APIAlertGroup {
+	sortOrder, sortReverse, sortLabel := getSortOptions(r)
 
 	switch sortOrder {
 	case "startsAt":
@@ -238,11 +236,11 @@ func sortAlertGroups(c *gin.Context, groups []models.APIAlertGroup) []models.API
 	return groups
 }
 
-func sortGrids(c *gin.Context, gridLabel string, gridsMap map[string]models.APIGrid, gridSortReverse bool) []models.APIGrid {
+func sortGrids(r *http.Request, gridLabel string, gridsMap map[string]models.APIGrid, gridSortReverse bool) []models.APIGrid {
 	grids := make([]models.APIGrid, 0, len(gridsMap))
 
 	for _, g := range gridsMap {
-		g.AlertGroups = sortAlertGroups(c, g.AlertGroups)
+		g.AlertGroups = sortAlertGroups(r, g.AlertGroups)
 		grids = append(grids, g)
 	}
 
@@ -266,4 +264,141 @@ func sortGrids(c *gin.Context, gridLabel string, gridsMap map[string]models.APIG
 	})
 
 	return grids
+}
+
+func isPreferredLabel(label, other string) bool {
+	ai, aj := -1, -1
+	for index, name := range config.Config.Grid.Auto.Order {
+		if label == name {
+			ai = index
+		} else if other == name {
+			aj = index
+		}
+		if ai >= 0 && aj >= 0 {
+			return ai < aj
+		}
+	}
+	if ai != aj {
+		return aj < ai
+	}
+	return label < other
+}
+
+func autoGridLabel(dedupedAlerts []models.AlertGroup) string {
+	var alertsCount, alertGroupsCount int
+	labelNameToValueCount := map[string]map[string]int{}
+	for _, ag := range dedupedAlerts {
+		alertGroupsCount++
+		alertsCount += ag.Alerts.Len()
+		for _, alert := range ag.Alerts {
+			for key, val := range alert.Labels {
+				if _, ok := labelNameToValueCount[key]; !ok {
+					labelNameToValueCount[key] = map[string]int{}
+				}
+				if _, ok := labelNameToValueCount[key][val]; !ok {
+					labelNameToValueCount[key][val] = 0
+				}
+				labelNameToValueCount[key][val]++
+			}
+		}
+	}
+	log.Debug().Int("alerts", alertsCount).Int("groups", alertGroupsCount).Msg("Alerts count for automatic grid label")
+
+	candidates := map[string]int{}
+	for key, vals := range labelNameToValueCount {
+		if slices.StringInSlice(config.Config.Grid.Auto.Ignore, key) {
+			continue
+		}
+		var total int
+		uniqueValues := map[string]struct{}{}
+		for val, cnt := range vals {
+			total += cnt
+			uniqueValues[val] = struct{}{}
+		}
+		log.Debug().Str("label", key).Int("alerts", total).Msg("Number of alerts per label")
+		if total < alertsCount {
+			continue
+		}
+		candidates[key] = len(uniqueValues)
+	}
+
+	var lastLabel string
+	var lastCnt int
+	for key, uniqueValues := range candidates {
+		if uniqueValues == 1 || uniqueValues == alertsCount {
+			log.Debug().Int("variants", uniqueValues).Int("alerts", alertsCount).Int("groups", alertGroupsCount).Str("label", key).Msg("Excluding label from automatic grid selection")
+			continue
+		}
+		log.Debug().Int("variants", uniqueValues).Str("label", key).Msg("Automatic grid label candidate")
+		if lastCnt == 0 || uniqueValues < lastCnt || (uniqueValues == lastCnt && isPreferredLabel(key, lastLabel)) {
+			lastLabel = key
+			lastCnt = uniqueValues
+		}
+	}
+	return lastLabel
+}
+
+func filterAlerts(dedupedAlerts []models.AlertGroup, fl []filters.FilterT) (filteredAlerts []models.AlertGroup) {
+	var matches int
+	for _, ag := range dedupedAlerts {
+		agCopy := models.AlertGroup{
+			ID:                ag.ID,
+			Receiver:          ag.Receiver,
+			Labels:            ag.Labels,
+			LatestStartsAt:    ag.LatestStartsAt,
+			Alerts:            []models.Alert{},
+			AlertmanagerCount: map[string]int{},
+			StateCount:        map[string]int{},
+		}
+		for _, s := range models.AlertStateList {
+			agCopy.StateCount[s] = 0
+		}
+		for _, alert := range ag.Alerts {
+			alert := alert
+
+			var hadMismatch bool
+			for _, filter := range fl {
+				if filter.GetIsValid() {
+					if !filter.Match(&alert, matches) {
+						hadMismatch = true
+					}
+				}
+			}
+			if len(fl) > 0 && hadMismatch {
+				continue
+			}
+
+			blockedAMs := map[string]bool{}
+			for _, am := range alert.Alertmanager {
+				am := am
+				for _, filter := range fl {
+					if filter.GetIsValid() && filter.GetIsAlertmanagerFilter() && !filter.MatchAlertmanager(&am) {
+						blockedAMs[am.Name] = true
+					}
+				}
+			}
+			if len(blockedAMs) > 0 {
+				ams := []models.AlertmanagerInstance{}
+				for _, am := range alert.Alertmanager {
+					_, found := blockedAMs[am.Name]
+					if !found {
+						ams = append(ams, am)
+					}
+				}
+				alert.Alertmanager = ams
+			}
+			if len(alert.Alertmanager) == 0 {
+				continue
+			}
+
+			matches++
+			agCopy.Alerts = append(agCopy.Alerts, alert)
+			agCopy.StateCount[alert.State]++
+		}
+		if agCopy.Alerts.Len() > 0 {
+			filteredAlerts = append(filteredAlerts, agCopy)
+		}
+	}
+
+	return
 }

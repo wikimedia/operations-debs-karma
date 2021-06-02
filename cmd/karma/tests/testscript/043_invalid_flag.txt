@@ -1,0 +1,8 @@
+# Fails on invalid flag usage
+env CONFIG_FILE=foo.yaml
+karma.bin-should-fail --check-config --invalid.flag
+! stdout .
+cmp stderr stderr.txt
+
+-- stderr.txt --
+level=error msg="Execution failed" error="unknown flag: --invalid.flag"

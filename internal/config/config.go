@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -18,10 +19,10 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/posflag"
 	"github.com/mitchellh/mapstructure"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/pflag"
 
-	log "github.com/sirupsen/logrus"
-	yaml "gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v3"
 )
 
 var (
@@ -56,7 +57,7 @@ func SetupFlags(f *pflag.FlagSet) {
 	f.Bool("alertAcknowledgement.enabled", false, "Enable alert acknowledging")
 	f.Duration("alertAcknowledgement.duration", time.Minute*15, "Initial silence duration when acknowledging alerts with short lived silences")
 	f.String("alertAcknowledgement.author", "karma", "Default silence author when acknowledging alerts with short lived silences")
-	f.String("alertAcknowledgement.commentPrefix", "ACK!", "Comment prefix used when acknowledging alerts with short lived silences")
+	f.String("alertAcknowledgement.comment", "ACK! This alert was acknowledged using karma on %NOW%", "Comment used when acknowledging alerts with short lived silences")
 
 	f.String("authorization.acl.silences", "", "Path to silence ACL config file")
 
@@ -70,6 +71,9 @@ func SetupFlags(f *pflag.FlagSet) {
 	f.StringSlice("annotations.keep", []string{},
 		"List of annotations to keep, all other annotations will be stripped")
 	f.StringSlice("annotations.strip", []string{}, "List of annotations to ignore")
+	f.StringSlice("annotations.actions", []string{}, "List of annotations that will be moved to the alert menu")
+	f.StringSlice("annotations.order", []string{}, "Preferred order of annotation names")
+	f.Bool("annotations.enableInsecureHTML", false, "Enable HTML strings in annotations to be parsed as HTML, enable at your own risk")
 
 	f.String("config.file", "", "Full path to the configuration file, 'karma.yaml' will be used if found in the current working directory")
 
@@ -91,13 +95,20 @@ func SetupFlags(f *pflag.FlagSet) {
 	f.String("grid.sorting.order", "startsAt", "Default sort order for alert grid")
 	f.Bool("grid.sorting.reverse", true, "Reverse sort order")
 	f.String("grid.sorting.label", "alertname", "Label name to use when sorting alert grid by label")
+	f.StringSlice("grid.auto.ignore", []string{}, "List of label names not allowed for automatic multi-grid")
+	f.StringSlice("grid.auto.order", []string{}, "Order of preference for selecting label names for automatic multi-grid")
 
-	f.Bool("log.config", true, "Log used configuration to log on startup")
+	f.Bool("history.enabled", true, "Enable alert history queries")
+	f.Duration("history.timeout", time.Second*20, "Timeout for history queries against source Prometheus servers")
+	f.Int("history.workers", 30, "Number of history query workers to run")
+
+	f.Bool("log.config", false, "Log used configuration to log on startup")
 	f.String("log.level", "info",
 		"Log level, one of: debug, info, warning, error, fatal and panic")
 	f.String("log.format", "text",
 		"Log format, one of: text, json")
-	f.Bool("log.timestamp", true, "Add timestamps to all log messages")
+	f.Bool("log.requests", false, "Enable request logging")
+	f.Bool("log.timestamp", false, "Add timestamps to all log messages")
 
 	f.StringSlice("receivers.keep", []string{},
 		"List of receivers to keep, all alerts with different receivers will be ignored")
@@ -109,6 +120,10 @@ func SetupFlags(f *pflag.FlagSet) {
 	f.String("listen.address", "", "IP/Hostname to listen on")
 	f.Int("listen.port", 8080, "HTTP port to listen on")
 	f.String("listen.prefix", "/", "URL prefix")
+	f.String("listen.tls.cert", "", "TLS certificate path (enables HTTPS)")
+	f.String("listen.tls.key", "", "TLS key path (enables HTTPS)")
+	f.Duration("listen.timeout.read", time.Second*10, "HTTP request read timeout")
+	f.Duration("listen.timeout.write", time.Second*20, "HTTP response write timeout")
 
 	f.String("sentry.public", "", "Sentry DSN for Go exceptions")
 	f.String("sentry.private", "", "Sentry DSN for JavaScript exceptions")
@@ -117,12 +132,30 @@ func SetupFlags(f *pflag.FlagSet) {
 	f.Bool("ui.hideFiltersWhenIdle", true, "Hide the filters bar when idle")
 	f.Bool("ui.colorTitlebar", false, "Color alert group titlebar based on alert state")
 	f.String("ui.theme", "auto", "Default theme, 'light', 'dark' or 'auto' (follow browser preference)")
+	f.Bool("ui.animations", true, "Enable UI animations")
 	f.Int("ui.minimalGroupWidth", 420, "Minimal width for each alert group on the grid")
 	f.Int("ui.alertsPerGroup", 5, "Default number of alerts to show for each alert group")
 	f.String("ui.collapseGroups", "collapsedOnMobile", "Default state for alert groups")
 }
 
-func readConfigFile(k *koanf.Koanf, flags *pflag.FlagSet) string {
+func validateConfigFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+
+	cfg := configSchema{}
+	d := yaml.NewDecoder(f)
+	d.KnownFields(true)
+	err = d.Decode(&cfg)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func readConfigFile(k *koanf.Koanf, flags *pflag.FlagSet) (string, error) {
 	var configFile string
 
 	// 1. Load file from flags is set
@@ -141,11 +174,11 @@ func readConfigFile(k *koanf.Koanf, flags *pflag.FlagSet) string {
 	}
 	if configFile != "" {
 		if err := k.Load(file.Provider(configFile), yamlParser.Parser()); err != nil {
-			log.Fatalf("Failed to load configuration file %q: %v", configFile, err)
+			return "", fmt.Errorf("failed to load configuration file %q: %v", configFile, err)
 		}
-		return configFile
+		return configFile, nil
 	}
-	return configFile
+	return configFile, nil
 }
 
 func readEnvVariables(k *koanf.Koanf) {
@@ -172,12 +205,12 @@ func readEnvVariables(k *koanf.Koanf) {
 			return "alertAcknowledgement.duration"
 		case "ALERTACKNOWLEDGEMENT_AUTHOR":
 			return "alertAcknowledgement.author"
-		case "ALERTACKNOWLEDGEMENT_COMMENTPREFIX":
-			return "alertAcknowledgement.commentPrefix"
-		case "SILENCEFORM_AUTHOR_POPULATE_FROM_HEADER_HEADER":
-			return "silenceForm.author.populate_from_header.header"
-		case "SILENCEFORM_AUTHOR_POPULATE_FROM_HEADER_VALUE_RE":
-			return "silenceForm.author.populate_from_header.value_re"
+		case "ALERTACKNOWLEDGEMENT_COMMENT":
+			return "alertAcknowledgement.comment"
+		case "ANNOTATIONS_ENABLEINSECUREHTML":
+			return "annotations.enableInsecureHTML"
+		case "AUTHENTICATION_HEADER_VALUE_RE":
+			return "authentication.header.value_re"
 		case "SILENCEFORM_STRIP_LABELS":
 			return "silenceForm.strip.labels"
 		case "UI_HIDEFILTERSWHENIDLE":
@@ -206,14 +239,18 @@ func readFlags(k *koanf.Koanf, flags *pflag.FlagSet) {
 // 1. CLI flags
 // 2. Config file
 // 3. Environment variables
-func (config *configSchema) Read(flags *pflag.FlagSet) string {
+func (config *configSchema) Read(flags *pflag.FlagSet) (string, error) {
 	k := koanf.New(".")
 	var configFileUsed string
 
-	// 3. read all environemnt variables
+	// 3. read all environment variables
 	readEnvVariables(k)
 	// 2. read config file
-	if cf := readConfigFile(k, flags); cf != "" {
+	cf, err := readConfigFile(k, flags)
+	if err != nil {
+		return "", err
+	}
+	if cf != "" {
 		configFileUsed = cf
 	}
 	// 1. read flags
@@ -233,30 +270,36 @@ func (config *configSchema) Read(flags *pflag.FlagSet) string {
 		FlatPaths:     false,
 		DecoderConfig: &dConf,
 	}
-	err := k.UnmarshalWithConf("", &config, kConf)
+	err = k.UnmarshalWithConf("", &config, kConf)
 	if err != nil {
-		log.Fatalf("Failed to unmarshal configuration: %v", err)
+		return "", fmt.Errorf("failed to unmarshal configuration: %v", err)
+	}
+
+	if configFileUsed != "" {
+		if err := validateConfigFile(configFileUsed); err != nil {
+			return "", fmt.Errorf("failed to parse configuration file %q: %v", configFileUsed, err)
+		}
 	}
 
 	if config.Authentication.Header.Name != "" && len(config.Authentication.BasicAuth.Users) > 0 {
-		log.Fatalf("Both authentication.basicAuth.users and authentication.header.name is set, only one can be enabled")
+		return "", fmt.Errorf("both authentication.basicAuth.users and authentication.header.name is set, only one can be enabled")
 	}
 
 	if config.Authentication.Header.ValueRegex != "" {
 		_, err = regex.CompileAnchored(config.Authentication.Header.ValueRegex)
 		if err != nil {
-			log.Fatalf("Invalid regex for authentication.header.value_re: %s", err.Error())
+			return "", fmt.Errorf("invalid regex for authentication.header.value_re: %s", err.Error())
 		}
 		if config.Authentication.Header.Name == "" {
-			log.Fatalf("authentication.header.name is required when authentication.header.value_re is set")
+			return "", fmt.Errorf("authentication.header.name is required when authentication.header.value_re is set")
 		}
 	} else if config.Authentication.Header.Name != "" {
-		log.Fatalf("authentication.header.value_re is required when authentication.header.name is set")
+		return "", fmt.Errorf("authentication.header.value_re is required when authentication.header.name is set")
 	}
 
 	for _, u := range config.Authentication.BasicAuth.Users {
 		if u.Username == "" || u.Password == "" {
-			log.Fatalf("authentication.basicAuth.users require both username and password to be set")
+			return "", fmt.Errorf("authentication.basicAuth.users require both username and password to be set")
 		}
 	}
 
@@ -265,7 +308,7 @@ func (config *configSchema) Read(flags *pflag.FlagSet) string {
 	}
 
 	if !slices.StringInSlice([]string{"omit", "include", "same-origin"}, config.Alertmanager.CORS.Credentials) {
-		log.Fatalf("Invalid alertmanager.cors.credentials value '%s', allowed options: omit, inclue, same-origin", config.Alertmanager.CORS.Credentials)
+		return "", fmt.Errorf("invalid alertmanager.cors.credentials value '%s', allowed options: omit, inclue, same-origin", config.Alertmanager.CORS.Credentials)
 	}
 
 	for i, s := range config.Alertmanager.Servers {
@@ -279,47 +322,62 @@ func (config *configSchema) Read(flags *pflag.FlagSet) string {
 			config.Alertmanager.Servers[i].CORS.Credentials = config.Alertmanager.CORS.Credentials
 		}
 		if !slices.StringInSlice([]string{"omit", "include", "same-origin"}, config.Alertmanager.Servers[i].CORS.Credentials) {
-			log.Fatalf("Invalid cors.credentials value '%s' for alertmanager '%s', allowed options: omit, inclue, same-origin", config.Alertmanager.Servers[i].CORS.Credentials, s.Name)
+			return "", fmt.Errorf("invalid cors.credentials value '%s' for alertmanager '%s', allowed options: omit, inclue, same-origin", config.Alertmanager.Servers[i].CORS.Credentials, s.Name)
 		}
 	}
 
 	for _, authGroup := range config.Authorization.Groups {
 		if authGroup.Name == "" {
-			log.Fatalf("'name' is required for every authorization group")
+			return "", fmt.Errorf("'name' is required for every authorization group")
 		}
 		if len(authGroup.Members) == 0 {
-			log.Fatalf("'members' is required for every authorization group")
+			return "", fmt.Errorf("'members' is required for every authorization group")
 		}
 	}
 
 	for labelName, customColors := range config.Labels.Color.Custom {
 		for i, customColor := range customColors {
 			if customColor.Value == "" && customColor.ValueRegex == "" {
-				log.Fatalf("Custom label color for '%s' is missing 'value' or 'value_re'", labelName)
+				return "", fmt.Errorf("custom label color for '%s' is missing 'value' or 'value_re'", labelName)
 			}
 			if customColor.ValueRegex != "" {
 				config.Labels.Color.Custom[labelName][i].CompiledRegex, err = regex.CompileAnchored(customColor.ValueRegex)
 				if err != nil {
-					log.Fatalf("Failed to parse custom color regex rule '%s' for '%s' label: %s", customColor.ValueRegex, labelName, err)
+					return "", fmt.Errorf("failed to parse custom color regex rule '%s' for '%s' label: %s", customColor.ValueRegex, labelName, err)
 				}
 			}
 		}
 	}
 
 	if !slices.StringInSlice([]string{"disabled", "startsAt", "label"}, config.Grid.Sorting.Order) {
-		log.Fatalf("Invalid grid.sorting.order value '%s', allowed options: disabled, startsAt, label", config.Grid.Sorting.Order)
+		return "", fmt.Errorf("invalid grid.sorting.order value '%s', allowed options: disabled, startsAt, label", config.Grid.Sorting.Order)
 	}
 
 	if !slices.StringInSlice([]string{"expanded", "collapsed", "collapsedOnMobile"}, config.UI.CollapseGroups) {
-		log.Fatalf("Invalid ui.collapseGroups value '%s', allowed options: expanded, collapsed, collapsedOnMobile", config.UI.CollapseGroups)
+		return "", fmt.Errorf("invalid ui.collapseGroups value '%s', allowed options: expanded, collapsed, collapsedOnMobile", config.UI.CollapseGroups)
 	}
 
 	if !slices.StringInSlice([]string{"light", "dark", "auto"}, config.UI.Theme) {
-		log.Fatalf("Invalid ui.theme value '%s', allowed options: light, dark, auto", config.UI.Theme)
+		return "", fmt.Errorf("invalid ui.theme value '%s', allowed options: light, dark, auto", config.UI.Theme)
 	}
 
 	if config.Listen.Prefix != "" && !strings.HasPrefix(config.Listen.Prefix, "/") {
-		log.Fatalf("listen.prefix must start with '/', got %q", config.Listen.Prefix)
+		return "", fmt.Errorf("listen.prefix must start with '/', got %q", config.Listen.Prefix)
+	}
+
+	if config.Listen.TLS.Cert != "" && config.Listen.TLS.Key == "" {
+		return "", fmt.Errorf("listen.tls.key must be set when listen.tls.cert is set")
+	}
+
+	if config.Listen.TLS.Key != "" && config.Listen.TLS.Cert == "" {
+		return "", fmt.Errorf("listen.tls.cert must be set when listen.tls.key is set")
+	}
+
+	for i := 0; i < len(config.History.Rewrite); i++ {
+		config.History.Rewrite[i].SourceRegex, err = regex.CompileAnchored(config.History.Rewrite[i].Source)
+		if err != nil {
+			return "", fmt.Errorf("history.rewrite source regex %q is invalid: %v", config.History.Rewrite[i].Source, err)
+		}
 	}
 
 	// accept single Alertmanager server from flag/env if nothing is set yet
@@ -340,7 +398,7 @@ func (config *configSchema) Read(flags *pflag.FlagSet) string {
 
 	Config = config
 
-	return configFileUsed
+	return configFileUsed, nil
 }
 
 // LogValues will dump runtime config to logs
@@ -361,17 +419,23 @@ func (config *configSchema) LogValues() {
 	// replace passwords in Alertmanager URIs with 'xxx'
 	servers := []AlertmanagerConfig{}
 	for _, s := range cfg.Alertmanager.Servers {
+		h := map[string]string{}
+		for key := range s.Headers {
+			h[key] = "***"
+		}
 		server := AlertmanagerConfig{
 			Cluster:     s.Cluster,
 			Name:        s.Name,
 			URI:         uri.SanitizeURI(s.URI),
 			ExternalURI: uri.SanitizeURI(s.ExternalURI),
+			ProxyURL:    s.ProxyURL,
 			Timeout:     s.Timeout,
 			TLS:         s.TLS,
 			Proxy:       s.Proxy,
 			ReadOnly:    s.ReadOnly,
-			Headers:     s.Headers,
+			Headers:     h,
 			CORS:        s.CORS,
+			Healthcheck: s.Healthcheck,
 		}
 		servers = append(servers, server)
 	}
@@ -382,10 +446,14 @@ func (config *configSchema) LogValues() {
 		config.Sentry.Private = uri.SanitizeURI(config.Sentry.Private)
 	}
 
-	out, _ := yaml.Marshal(cfg)
-	log.Info("Parsed configuration:")
-	scanner := bufio.NewScanner(bytes.NewReader(out))
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	_ = enc.Encode(cfg)
+
+	log.Info().Msg("Parsed configuration:")
+	scanner := bufio.NewScanner(&buf)
 	for scanner.Scan() {
-		log.Info(scanner.Text())
+		log.Info().Msg(scanner.Text())
 	}
 }

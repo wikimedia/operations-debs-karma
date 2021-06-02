@@ -3,28 +3,29 @@ package alertmanager_test
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/jarcoal/httpmock"
-	"github.com/spf13/pflag"
 
 	"github.com/prymitive/karma/internal/alertmanager"
 	"github.com/prymitive/karma/internal/config"
 	"github.com/prymitive/karma/internal/mock"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/jarcoal/httpmock"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/spf13/pflag"
 )
 
 func init() {
-	log.SetLevel(log.ErrorLevel)
+	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
 	httpmock.Activate()
 	for _, version := range mock.ListAllMocks() {
 		name := fmt.Sprintf("dedup-mock-%s", version)
 		uri := fmt.Sprintf("http://%s.localhost", version)
 		am, err := alertmanager.NewAlertmanager("cluster", name, uri, alertmanager.WithRequestTimeout(time.Second))
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal().Err(err).Msg("Error")
 		}
 		err = alertmanager.RegisterAlertmanager(am)
 		if err != nil {
@@ -51,7 +52,7 @@ func pullAlerts() error {
 func mockConfigRead() {
 	f := pflag.NewFlagSet(".", pflag.ExitOnError)
 	config.SetupFlags(f)
-	config.Config.Read(f)
+	_, _ = config.Config.Read(f)
 }
 
 func TestDedupAlerts(t *testing.T) {
@@ -181,8 +182,10 @@ func TestStripReceivers(t *testing.T) {
 }
 
 func TestClearData(t *testing.T) {
-	log.SetLevel(log.PanicLevel)
+	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
 	httpmock.Activate()
+	defer httpmock.DeactivateAndReset()
+
 	for _, version := range mock.ListAllMocks() {
 		name := fmt.Sprintf("clear-data-mock-%s", version)
 		uri := fmt.Sprintf("http://localhost/clear/%s", version)
@@ -190,8 +193,8 @@ func TestClearData(t *testing.T) {
 
 		mock.RegisterURL(fmt.Sprintf("%s/metrics", uri), version, "metrics")
 		_ = am.Pull()
-		if am.Version() != "" {
-			t.Errorf("[%s] Got non-empty version string: %s", am.Name, am.Version())
+		if am.Version() == "" {
+			t.Errorf("[%s] Got empty version string", am.Name)
 		}
 		if am.Error() == "" {
 			t.Errorf("[%s] Got empty error string", am.Name)
@@ -209,8 +212,8 @@ func TestClearData(t *testing.T) {
 		mock.RegisterURL(fmt.Sprintf("%s/api/v2/status", uri), version, "api/v2/status")
 		mock.RegisterURL(fmt.Sprintf("%s/api/v2/silences", uri), version, "api/v2/silences")
 		_ = am.Pull()
-		if am.Version() != "" {
-			t.Errorf("[%s] Got non-empty version string: %s", am.Name, am.Version())
+		if am.Version() == "" {
+			t.Errorf("[%s] Got empty version string: %s", am.Name, am.Version())
 		}
 		if am.Error() == "" {
 			t.Errorf("[%s] Got empty error string", am.Name)
@@ -230,7 +233,7 @@ func TestClearData(t *testing.T) {
 		if am.Version() == "" {
 			t.Errorf("[%s] Got empty version string", am.Name)
 		}
-		if am.Error() != "" {
+		if !strings.HasPrefix(am.Error(), "missing cluster peers:") {
 			t.Errorf("[%s] Got non-empty error string: %s", am.Name, am.Error())
 		}
 		if len(am.Silences()) == 0 {

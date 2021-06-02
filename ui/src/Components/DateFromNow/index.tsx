@@ -1,4 +1,4 @@
-import React, { FunctionComponent, useState, useEffect } from "react";
+import { FC, useState, useEffect } from "react";
 
 import parseISO from "date-fns/parseISO";
 import differenceInSeconds from "date-fns/differenceInSeconds";
@@ -15,10 +15,8 @@ const formatLabel = (timestamp: string) => {
   });
 };
 
-export const DateFromNow: FunctionComponent<{ timestamp: string }> = ({
-  timestamp,
-}) => {
-  const [label, setLabel] = useState(formatLabel(timestamp));
+export const DateFromNow: FC<{ timestamp: string }> = ({ timestamp }) => {
+  const [label, setLabel] = useState<string>(formatLabel(timestamp));
 
   useEffect(() => {
     const timer = setInterval(
@@ -28,5 +26,5 @@ export const DateFromNow: FunctionComponent<{ timestamp: string }> = ({
     return () => clearInterval(timer);
   }, [timestamp]);
 
-  return <React.Fragment>{label}</React.Fragment>;
+  return <>{label}</>;
 };

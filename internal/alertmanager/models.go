@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"path"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/prymitive/karma/internal/config"
 	"github.com/prymitive/karma/internal/filters"
 	"github.com/prymitive/karma/internal/mapper"
 	"github.com/prymitive/karma/internal/models"
@@ -19,7 +17,7 @@ import (
 	"github.com/prymitive/karma/internal/uri"
 	"github.com/prymitive/karma/internal/verprobe"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -30,6 +28,11 @@ const (
 type alertmanagerMetrics struct {
 	Cycles float64
 	Errors map[string]float64
+}
+
+type healthCheck struct {
+	filters  []filters.FilterT
+	wasFound bool
 }
 
 // Alertmanager represents Alertmanager upstream instance
@@ -50,47 +53,55 @@ type Alertmanager struct {
 	// lock protects data access while updating
 	lock sync.RWMutex
 	// fields for storing pulled data
-	alertGroups  []models.AlertGroup
-	silences     map[string]models.Silence
-	colors       models.LabelsColorMap
-	autocomplete []models.Autocomplete
-	knownLabels  []string
-	lastError    string
-	status       models.AlertmanagerStatus
-	clusterName  string
+	alertGroups      []models.AlertGroup
+	silences         map[string]models.Silence
+	colors           models.LabelsColorMap
+	autocomplete     []models.Autocomplete
+	knownLabels      []string
+	lastError        string
+	lastVersionProbe string
+	status           models.AlertmanagerStatus
+	clusterName      string
 	// metrics tracked per alertmanager instance
 	Metrics alertmanagerMetrics
 	// headers to send with each AlertManager request
 	HTTPHeaders map[string]string
 	// CORS credentials
-	CORSCredentials string `json:"corsCredentials"`
+	CORSCredentials     string `json:"corsCredentials"`
+	healthchecks        map[string]healthCheck
+	healthchecksVisible bool
 }
 
 func (am *Alertmanager) probeVersion() string {
-	const fakeVersion = "999.0.0"
-
 	url, err := uri.JoinURL(am.URI, "metrics")
 	if err != nil {
-		log.Errorf("Failed to join url '%s' and path 'metrics': %s", am.SanitizedURI(), err)
-		return fakeVersion
+		log.Error().
+			Err(err).
+			Str("uri", am.SanitizedURI()).
+			Msg("Failed to join url with /metrics path")
+		return ""
 	}
 
 	source, err := am.reader.Read(url, am.HTTPHeaders)
 	if err != nil {
-		log.Errorf("[%s] %s request failed: %s", am.Name, uri.SanitizeURI(url), err)
-		return fakeVersion
+		log.Error().
+			Err(err).
+			Str("alertmanager", am.Name).
+			Str("uri", am.SanitizedURI()).
+			Msg("Request failed")
+		return ""
 	}
 	defer source.Close()
 
 	version, err := verprobe.Detect(source)
 	if err != nil {
-		return fakeVersion
+		log.Error().Err(err).Str("alertmanager", am.Name).Msg("Error while discovering version")
+		return ""
 	}
-	log.Infof("[%s] Upstream version: %s", am.Name, version)
-
-	if version == "0.17.0" || version == "0.18.0" {
-		log.Warningf("Alertmanager %s might return incomplete list of alert groups in the API, please upgrade to >=0.19.0, see https://github.com/prymitive/karma/issues/812", version)
-	}
+	log.Info().
+		Str("version", version).
+		Str("alertmanager", am.Name).
+		Msg("Upstream version")
 
 	return version
 }
@@ -118,8 +129,12 @@ func (am *Alertmanager) clearData() {
 	am.colors = models.LabelsColorMap{}
 	am.autocomplete = []models.Autocomplete{}
 	am.knownLabels = []string{}
+	am.lock.Unlock()
+}
+
+func (am *Alertmanager) clearStatus() {
+	am.lock.Lock()
 	am.status = models.AlertmanagerStatus{
-		Version: "",
 		ID:      "",
 		PeerIDs: []string{},
 	}
@@ -139,9 +154,16 @@ func (am *Alertmanager) pullSilences(version string) error {
 	if err != nil {
 		return err
 	}
-	log.Infof("[%s] Got %d silences(s) in %s", am.Name, len(silences), time.Since(start))
+	log.Info().
+		Str("alertmanager", am.Name).
+		Int("silences", len(silences)).
+		Dur("duration", time.Since(start)).
+		Msg("Got silences")
 
-	log.Infof("[%s] Detecting ticket links in silences (%d)", am.Name, len(silences))
+	log.Info().
+		Str("alertmanager", am.Name).
+		Int("silences", len(silences)).
+		Msg("Detecting ticket links in silences")
 	silenceMap := make(map[string]models.Silence, len(silences))
 	for _, silence := range silences {
 		silence := silence // scopelint pin
@@ -159,11 +181,7 @@ func (am *Alertmanager) pullSilences(version string) error {
 // InternalURI is the URI of this Alertmanager that will be used for all request made by the UI
 func (am *Alertmanager) InternalURI() string {
 	if am.ProxyRequests {
-		sub := fmt.Sprintf("/proxy/alertmanager/%s", am.Name)
-		if strings.HasPrefix(config.Config.Listen.Prefix, "/") {
-			return path.Join(config.Config.Listen.Prefix, sub)
-		}
-		return path.Join("/"+config.Config.Listen.Prefix, sub)
+		return fmt.Sprintf("./proxy/alertmanager/%s", am.Name)
 	}
 
 	// strip all user/pass information, fetch() doesn't support it anyway
@@ -186,18 +204,33 @@ func (am *Alertmanager) pullAlerts(version string) error {
 		return err
 	}
 
+	healthchecks := map[string]healthCheck{}
+	am.lock.RLock()
+	for name, hc := range am.healthchecks {
+		healthchecks[name] = healthCheck{
+			filters:  hc.filters,
+			wasFound: false,
+		}
+	}
+	am.lock.RUnlock()
+
 	var groups []models.AlertGroup
 
 	start := time.Now()
-
 	groups, err = mapper.Collect(am.URI, am.HTTPHeaders, am.RequestTimeout, am.HTTPTransport)
 	if err != nil {
 		return err
 	}
+	log.Info().
+		Str("alertmanager", am.Name).
+		Int("groups", len(groups)).
+		Dur("duration", time.Since((start))).
+		Msg("Collected alert groups")
 
-	log.Infof("[%s] Got %d alert group(s) in %s", am.Name, len(groups), time.Since(start))
-
-	log.Infof("[%s] Deduplicating alert groups (%d)", am.Name, len(groups))
+	log.Info().
+		Str("alertmanager", am.Name).
+		Int("groups", len(groups)).
+		Msg("Deduplicating alert groups")
 	uniqueGroups := map[string]models.AlertGroup{}
 	uniqueAlerts := map[string]map[string]models.Alert{}
 	knownLabelsMap := map[string]bool{}
@@ -211,6 +244,8 @@ func (am *Alertmanager) pullAlerts(version string) error {
 			}
 		}
 		for _, alert := range ag.Alerts {
+			alert := alert
+
 			if _, found := uniqueAlerts[agID]; !found {
 				uniqueAlerts[agID] = map[string]models.Alert{}
 			}
@@ -221,15 +256,24 @@ func (am *Alertmanager) pullAlerts(version string) error {
 			for key := range alert.Labels {
 				knownLabelsMap[key] = true
 			}
-		}
 
+			if name, hc := am.IsHealthCheckAlert(&alert); hc != nil {
+				healthchecks[name] = healthCheck{
+					filters:  hc.filters,
+					wasFound: true,
+				}
+			}
+		}
 	}
 
 	dedupedGroups := make([]models.AlertGroup, 0, len(uniqueGroups))
 	colors := models.LabelsColorMap{}
 	autocompleteMap := map[string]models.Autocomplete{}
 
-	log.Infof("[%s] Processing unique alert groups (%d)", am.Name, len(uniqueGroups))
+	log.Info().
+		Str("alertmanager", am.Name).
+		Int("groups", len(uniqueGroups)).
+		Msg("Processing deduplicated alert groups")
 	for _, ag := range uniqueGroups {
 		alerts := make(models.AlertList, 0, len(uniqueAlerts[ag.ID]))
 		for _, alert := range uniqueAlerts[ag.ID] {
@@ -282,7 +326,10 @@ func (am *Alertmanager) pullAlerts(version string) error {
 		dedupedGroups = append(dedupedGroups, ag)
 	}
 
-	log.Infof("[%s] Merging autocomplete data (%d)", am.Name, len(autocompleteMap))
+	log.Info().
+		Str("alertmanager", am.Name).
+		Int("hints", len(autocompleteMap)).
+		Msg("Merging autocomplete hints")
 	autocomplete := make([]models.Autocomplete, 0, len(autocompleteMap))
 	for _, hint := range autocompleteMap {
 		autocomplete = append(autocomplete, hint)
@@ -298,6 +345,7 @@ func (am *Alertmanager) pullAlerts(version string) error {
 	am.colors = colors
 	am.autocomplete = autocomplete
 	am.knownLabels = knownLabels
+	am.healthchecks = healthchecks
 	am.lock.Unlock()
 
 	return nil
@@ -308,6 +356,11 @@ func (am *Alertmanager) Pull() error {
 	am.Metrics.Cycles++
 
 	version := am.probeVersion()
+	am.lock.Lock()
+	am.lastVersionProbe = version
+	am.lock.Unlock()
+
+	log.Debug().Str("alertmanager", am.Name).Str("version", version).Msg("Probed alertmanager version")
 
 	// verify that URI is correct
 	_, err := url.Parse(am.URI)
@@ -318,10 +371,14 @@ func (am *Alertmanager) Pull() error {
 	status, err := am.fetchStatus(version)
 	if err != nil {
 		am.clearData()
+		am.clearStatus()
 		am.setError(err.Error())
 		am.Metrics.Errors[labelValueErrorsSilences]++
 		return err
 	}
+	am.lock.Lock()
+	am.status = *status
+	am.lock.Unlock()
 
 	err = am.pullSilences(version)
 	if err != nil {
@@ -340,10 +397,15 @@ func (am *Alertmanager) Pull() error {
 	}
 
 	am.lock.Lock()
-	am.status = *status
 	am.lastError = ""
 	am.clusterName = ""
 	am.lock.Unlock()
+
+	for name, hc := range am.healthchecks {
+		if !hc.wasFound {
+			am.setError(fmt.Sprintf("Healthcheck filter %q didn't match any alerts", name))
+		}
+	}
 
 	return nil
 }
@@ -425,11 +487,33 @@ func (am *Alertmanager) setError(err string) {
 	am.lastError = err
 }
 
-func (am *Alertmanager) Error() string {
+func (am *Alertmanager) getLastError() string {
 	am.lock.RLock()
 	defer am.lock.RUnlock()
-
 	return am.lastError
+}
+
+func (am *Alertmanager) Error() string {
+	lastError := am.getLastError()
+	if lastError != "" {
+		return lastError
+	}
+
+	configPeers := clusterMembersFromConfig(am)
+	apiPeers := clusterMembersFromAPI(am)
+	missing, _ := slices.StringSliceDiff(configPeers, apiPeers)
+
+	if len(missing) > 0 {
+		log.Debug().
+			Str("alertmanager", am.Name).
+			Strs("configured", configPeers).
+			Strs("api", apiPeers).
+			Strs("missing", missing).
+			Msg("Cluster peers mismatch")
+		return fmt.Sprintf("missing cluster peers: %s", strings.Join(missing, ", "))
+	}
+
+	return ""
 }
 
 // SanitizedURI returns a copy of Alertmanager.URI with password replaced by
@@ -443,7 +527,7 @@ func (am *Alertmanager) Version() string {
 	am.lock.RLock()
 	defer am.lock.RUnlock()
 
-	return am.status.Version
+	return am.lastVersionProbe
 }
 
 // ClusterPeers returns a list of IDs of all peers this instance
@@ -460,18 +544,27 @@ func (am *Alertmanager) ClusterPeers() []string {
 // that are in the same cluster as this instance (including self).
 // Names are the same as in karma configuration.
 func (am *Alertmanager) ClusterMemberNames() []string {
+	// copy status so we don't need to hold RLock until return
+	status := models.AlertmanagerStatus{}
 	am.lock.RLock()
-	defer am.lock.RUnlock()
+	status.ID = am.status.ID
+	copy(am.status.PeerIDs, status.PeerIDs)
+	am.lock.RUnlock()
 
 	members := []string{am.Name}
 
 	upstreams := GetAlertmanagers()
 	for _, upstream := range upstreams {
+		// skip self, it's already part of members slice
 		if upstream.Name == am.Name {
 			continue
 		}
 		for _, peerID := range upstream.ClusterPeers() {
-			if slices.StringInSlice(am.status.PeerIDs, peerID) {
+			// IF
+			// other alertmanagers peerID is in this alertmanager cluster status
+			// OR
+			// this alertmanager peerID is in other alertmanagers cluster status
+			if slices.StringInSlice(status.PeerIDs, peerID) || peerID == status.ID {
 				if !slices.StringInSlice(members, upstream.Name) {
 					members = append(members, upstream.Name)
 				}
@@ -493,18 +586,38 @@ func (am *Alertmanager) ClusterName() string {
 
 	var clusterName string
 	if am.Cluster != "" {
-		configPeers := clusterMembersFromConfig(am)
-		apiPeers := clusterMembersFromAPI(am)
-		missing, extra := slices.StringSliceDiff(configPeers, apiPeers)
-
-		if len(missing) == 0 && len(extra) == 0 {
-			clusterName = am.Cluster
-		} else {
-			clusterName = strings.Join(am.ClusterMemberNames(), " | ")
-		}
+		clusterName = am.Cluster
 	} else {
 		clusterName = strings.Join(am.ClusterMemberNames(), " | ")
 	}
 	am.clusterName = clusterName
 	return clusterName
+}
+
+func (am *Alertmanager) IsHealthy() bool {
+	lastError := am.getLastError()
+	return lastError == ""
+}
+
+func (am *Alertmanager) IsHealthCheckAlert(alert *models.Alert) (string, *healthCheck) {
+	for name, hc := range am.healthchecks {
+		hc := hc
+		positiveMatch := false
+		negativeMatch := false
+		for _, hcFilter := range hc.filters {
+			if hcFilter.Match(alert, 0) {
+				log.Debug().
+					Str("alertmanager", am.Name).
+					Str("healthcheck", name).
+					Msg("Healthcheck alert matched")
+				positiveMatch = true
+			} else {
+				negativeMatch = true
+			}
+		}
+		if positiveMatch && !negativeMatch {
+			return name, &hc
+		}
+	}
+	return "", nil
 }

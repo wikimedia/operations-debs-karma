@@ -1,0 +1,20 @@
+# Raises an error if both header & basic auth authentication is enabled
+karma.bin-should-fail --config.file=karma.yaml
+! stdout .
+cmp stderr stderr.txt
+
+-- stderr.txt --
+level=error msg="Execution failed" error="both authentication.basicAuth.users and authentication.header.name is set, only one can be enabled"
+-- karma.yaml --
+alertmanager:
+  servers:
+    - name: default
+      uri: https://127.0.0.1:9093
+authentication:
+  header:
+    name: "foo"
+    value_re: ".+"
+  basicAuth:
+    users:
+      - username: me
+        password: foo

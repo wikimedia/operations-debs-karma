@@ -25,15 +25,15 @@ $light: lighten($gray-800, 5%);
 // make links light gray by default instead of green
 $link-color: $gray-400;
 
-$custom-control-indicator-bg: $gray-100;
-$custom-control-indicator-checked: $blue;
-$custom-control-indicator-disabled-bg: $gray-700;
-$custom-control-indicator-checked-disabled-bg: $gray-700;
+$form-check-indicator-bg: $gray-100;
+$form-check-indicator-checked: $blue;
+$form-check-indicator-disabled-bg: $gray-700;
+$form-check-indicator-checked-disabled-bg: $gray-700;
 
 $navbar-dark-brand-color: $navbar-dark-color;
-$navbar-dark-brand-hover-color: $white;
-$navbar-dark-hover-color: $white;
-$navbar-dark-active-color: $white;
+$navbar-dark-brand-hover-color: $gray-200;
+$navbar-dark-hover-color: $gray-200;
+$navbar-dark-active-color: $gray-200;
 
 // fix active tab color, for some reason it ends up with $primary as bg color
 $nav-tabs-link-active-bg: $gray-800;
@@ -59,21 +59,24 @@ $progress-bg: $black;
 
 $dropdown-bg: darken($gray-800, 2%);
 
+$with-click-default: $white;
+$with-click-dark: $white;
+$with-click-light: $dark;
+
+$accordion-icon-active-color: $body-color;
+$accordion-bg: $gray-800;
+$accordion-button-bg: $gray-700;
+$accordion-button-active-bg: $gray-700;
+
 @import "Styles/RebootlessBootstrap";
 @import "~bootswatch/dist/darkly/bootswatch";
 
-// this is used for navbar, to make it transparent
-.bg-primary-transparent {
-  background-color: rgba($primary, 0.95);
-}
-// version for modals
-.bg-primary-transparent-80 {
-  background-color: rgba($dark, 0.8);
-}
-
 $alert-bg: $list-group-bg;
+$alert-history-inactive: lighten($gray-700, 2%);
 $alertgroup-body-bg: lighten($gray-700, 5%);
 $alertgroup-footer-bg: lighten($gray-700, 2%);
+$silence-id: $white;
+$silence-color: $white;
 $silence-bg: lighten($gray-900, 2%);
 $silence-border: $black;
 $silence-comment-color: $gray-400;
@@ -88,34 +91,12 @@ $bg-focused: darken($blue, 5%);
 $components-date-range-today-color: $white;
 $components-date-range-sub-color: $white;
 
-$input-range-neutral-color: $gray-300;
-$input-range-neutral-light-color: $secondary;
+$input-range-track-background: $secondary;
+$input-range-thumb-font-color: $white;
 
 $color-default: #708090;
 
-@import "Styles/Components/Accordion";
-@import "Styles/Components/Alert";
-@import "Styles/Components/AlertGroup";
-@import "Styles/Components/BaseLabel";
-@import "Styles/Components/CenteredMessage";
-@import "Styles/Components/FilterInputLabel";
-@import "Styles/Components/LabelWithPercent";
-@import "Styles/Components/InputRange";
-@import "Styles/Components/ManagedSilence";
-@import "Styles/Components/Modal";
-@import "Styles/Components/NavBar";
-@import "Styles/Components/FilterInput";
-@import "Styles/Components/DateTimeSelect";
-@import "Styles/Components/MountModal";
-@import "Styles/Components/Placeholder";
-@import "Styles/Components/AlertGrid";
-@import "Styles/Components/Annotation";
-@import "Styles/Components/DropdownSlide";
-@import "Styles/Components/History";
-@import "Styles/Components/HistoryLabel";
-@import "Styles/Components/SilenceModal";
-@import "Styles/Components/Pagination";
-@import "Styles/Components/Tooltip";
+@import "Styles/Components";
 
 .badge,
 .modal-content {

@@ -1,11 +1,6 @@
-import React, {
-  FunctionComponent,
-  useState,
-  useEffect,
-  useCallback,
-} from "react";
+import React, { FC, useState, useEffect, useCallback } from "react";
 
-import { useObserver } from "mobx-react-lite";
+import { observer } from "mobx-react-lite";
 
 // no types, see react-app-env.d.ts
 import { useMediaPredicate } from "react-media-hook";
@@ -18,53 +13,26 @@ import {
   ReactSelectStyles,
 } from "Components/Theme/ReactSelect";
 import { BodyTheme, ThemeContext } from "Components/Theme";
+import { UIDefaults } from "Models/UI";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 import "Styles/ResetCSS.scss";
 import "Styles/FontBundle.scss";
 import "Styles/App.scss";
 
-// https://github.com/facebook/react/issues/14603
-const Grid = React.lazy(() =>
-  import("Components/Grid").then((module) => ({
-    default: module.Grid,
-  }))
-);
-const NavBar = React.lazy(() =>
-  import("Components/NavBar").then((module) => ({
-    default: module.NavBar,
-  }))
-);
-const Fetcher = React.lazy(() =>
-  import("Components/Fetcher").then((module) => ({
-    default: module.Fetcher,
-  }))
-);
-const FaviconBadge = React.lazy(() =>
-  import("Components/FaviconBadge").then((module) => ({
-    default: module.FaviconBadge,
-  }))
-);
-
-interface UIDefaults {
-  Refresh: number;
-  HideFiltersWhenIdle: boolean;
-  ColorTitlebar: boolean;
-  Theme: "light" | "dark" | "auto";
-  MinimalGroupWidth: number;
-  AlertsPerGroup: number;
-  CollapseGroups: "expanded" | "collapsed" | "collapsedOnMobile";
-}
+const Grid = React.lazy(() => import("Components/Grid"));
+const NavBar = React.lazy(() => import("Components/NavBar"));
+const FaviconBadge = React.lazy(() => import("Components/FaviconBadge"));
 
 interface AppProps {
   defaultFilters: Array<string>;
-  uiDefaults: UIDefaults;
+  uiDefaults: UIDefaults | null;
 }
 
-const App: FunctionComponent<AppProps> = ({ defaultFilters, uiDefaults }) => {
-  const [alertStore] = useState(new AlertStore(null));
-  const [silenceFormStore] = useState(new SilenceFormStore());
-  const [settingsStore] = useState(new Settings(uiDefaults));
+const App: FC<AppProps> = observer(({ defaultFilters, uiDefaults }) => {
+  const [alertStore] = useState<AlertStore>(new AlertStore(null));
+  const [silenceFormStore] = useState<SilenceFormStore>(new SilenceFormStore());
+  const [settingsStore] = useState<Settings>(new Settings(uiDefaults));
 
   useEffect(() => {
     let filters;
@@ -114,7 +82,7 @@ const App: FunctionComponent<AppProps> = ({ defaultFilters, uiDefaults }) => {
   const prefersColorScheme = useMediaPredicate("(prefers-color-scheme)");
   const prefersDark = useMediaPredicate("(prefers-color-scheme: dark)");
 
-  return useObserver(() => (
+  return (
     <ErrorBoundary>
       <span data-theme={`${settingsStore.themeConfig.config.theme}`} />
       <ThemeContext.Provider
@@ -136,8 +104,7 @@ const App: FunctionComponent<AppProps> = ({ defaultFilters, uiDefaults }) => {
               ? ReactSelectStyles(ReactSelectColors.Dark)
               : ReactSelectStyles(ReactSelectColors.Light),
           animations: {
-            enabled: true,
-            duration: 1000,
+            duration: settingsStore.themeConfig.config.animations ? 500 : 0,
           },
         }}
       >
@@ -153,14 +120,11 @@ const App: FunctionComponent<AppProps> = ({ defaultFilters, uiDefaults }) => {
             settingsStore={settingsStore}
             silenceFormStore={silenceFormStore}
           />
+          <FaviconBadge alertStore={alertStore} />
         </React.Suspense>
       </ThemeContext.Provider>
-      <React.Suspense fallback={null}>
-        <FaviconBadge alertStore={alertStore} />
-        <Fetcher alertStore={alertStore} settingsStore={settingsStore} />
-      </React.Suspense>
     </ErrorBoundary>
-  ));
-};
+  );
+});
 
 export { App };

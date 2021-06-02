@@ -2,15 +2,18 @@ package config
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 
-	yaml "gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v3"
 )
 
 type SilenceMatcher struct {
-	Name    string `yaml:"name"`
-	Value   string `yaml:"value"`
-	IsRegex bool   `yaml:"isRegex"`
+	Name       string `yaml:"name"`
+	NameRegex  string `yaml:"name_re"`
+	Value      string `yaml:"value"`
+	ValueRegex string `yaml:"value_re"`
+	IsRegex    *bool  `yaml:"isRegex"`
+	IsEqual    *bool  `yaml:"isEqual"`
 }
 
 type SilenceACLMatchersConfig struct {
@@ -22,7 +25,8 @@ type SilenceFilters struct {
 	NameRegex  string `yaml:"name_re,omitempty"`
 	Value      string `yaml:"value,omitempty"`
 	ValueRegex string `yaml:"value_re,omitempty"`
-	IsRegex    bool   `yaml:"isRegex"`
+	IsRegex    *bool  `yaml:"isRegex,omitempty"`
+	IsEqual    *bool  `yaml:"isEqual,omitempty"`
 }
 
 type SilenceACLRuleScope struct {
@@ -45,14 +49,16 @@ type silencesACLSchema struct {
 func ReadSilenceACLConfig(path string) (*silencesACLSchema, error) {
 	cfg := silencesACLSchema{}
 
-	f, err := ioutil.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to load silence ACL configuration file %q: %v", path, err)
+		return nil, fmt.Errorf("failed to load silence ACL configuration file %q: %v", path, err)
 	}
 
-	err = yaml.Unmarshal(f, &cfg)
+	d := yaml.NewDecoder(f)
+	d.KnownFields(true)
+	err = d.Decode(&cfg)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to parse silence ACL configuration file %q: %v", path, err)
+		return nil, fmt.Errorf("failed to parse silence ACL configuration file %q: %v", path, err)
 	}
 
 	return &cfg, nil

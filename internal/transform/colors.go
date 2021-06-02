@@ -2,37 +2,39 @@ package transform
 
 import (
 	"crypto/sha1"
+	"image/color"
 	"io"
 	"math/rand"
+	"sync"
 
 	"github.com/prymitive/karma/internal/config"
 	"github.com/prymitive/karma/internal/models"
 	"github.com/prymitive/karma/internal/slices"
 
 	"github.com/hansrodtang/randomcolor"
+	"github.com/rs/zerolog/log"
 	plcolors "gopkg.in/go-playground/colors.v1"
-
-	log "github.com/sirupsen/logrus"
 )
+
+var lock sync.RWMutex
 
 func labelToSeed(key string, val string) int64 {
 	h := sha1.New()
-
-	_, err := io.WriteString(h, key)
-	if err != nil {
-		log.Errorf("Failed to write label key '%s' to the seed sha1: %s", key, err)
-	}
-
-	_, err = io.WriteString(h, val)
-	if err != nil {
-		log.Errorf("Failed to write label value '%s' to the seed sha1: %s", val, err)
-	}
+	_, _ = io.WriteString(h, key)
+	_, _ = io.WriteString(h, val)
 
 	var seed int64
 	for _, i := range h.Sum(nil) {
 		seed += int64(i)
 	}
 	return seed
+}
+
+func colorFromKeyVal(key, val string) color.Color {
+	lock.Lock()
+	defer lock.Unlock()
+	rand.Seed(labelToSeed(key, val))
+	return randomcolor.New(randomcolor.Random, randomcolor.LIGHT)
 }
 
 func rgbToBrightness(r, g, b uint8) int32 {
@@ -42,7 +44,11 @@ func rgbToBrightness(r, g, b uint8) int32 {
 func parseCustomColor(colorStore models.LabelsColorMap, key, val, customColor string) {
 	color, err := plcolors.Parse(customColor)
 	if err != nil {
-		log.Warningf("Failed to parse custom color for %s=%s: %s", key, val, err)
+		log.Warn().
+			Err(err).
+			Str("key", key).
+			Str("value", val).
+			Msg("Failed to parse custom color")
 		return
 	}
 	rgb := color.ToRGB()
@@ -88,8 +94,7 @@ func ColorLabel(colorStore models.LabelsColorMap, key string, val string) {
 			colorStore[key] = make(map[string]models.LabelColors)
 		}
 		if _, found := colorStore[key][val]; !found {
-			rand.Seed(labelToSeed(key, val))
-			color := randomcolor.New(randomcolor.Random, randomcolor.LIGHT)
+			color := colorFromKeyVal(key, val)
 			red, green, blue, alpha := color.RGBA()
 			bc := models.Color{
 				Red:   uint8(red >> 8),

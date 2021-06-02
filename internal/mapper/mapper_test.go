@@ -16,19 +16,22 @@ type testCaseType struct {
 var testCases = []testCaseType{
 	{requestedVersion: "0.0", hadError: true},
 	{requestedVersion: "abc", hadError: true, hadPanic: true},
+	{requestedVersion: "0.1.0", hadError: true},
 	{requestedVersion: "0.4.0", hadError: true},
 	{requestedVersion: "0.4.0-rc-1", hadError: true},
 	{requestedVersion: "0.5.1-beta", hadError: true},
 	{requestedVersion: "0.6.6", hadError: true},
 	{requestedVersion: "0.15.0", hadError: true},
 	{requestedVersion: "0.16.0", hadError: true},
-	{requestedVersion: "0.17.0"},
-	{requestedVersion: "0.17.0-rc-1"},
-	{requestedVersion: "0.17.0-beta.1"},
-	{requestedVersion: "0.17.99-beta.1"},
-	{requestedVersion: "0.18-beta.1"},
-	{requestedVersion: "0.18"},
-	{requestedVersion: "0.18.1"},
+	{requestedVersion: "0.19.0"},
+	{requestedVersion: "0.19.0-rc-1"},
+	{requestedVersion: "0.19.0-beta.1"},
+	{requestedVersion: "0.19.99-beta.1"},
+	{requestedVersion: "0.20-beta.1"},
+	{requestedVersion: "0.20"},
+	{requestedVersion: "0.20.1"},
+	{requestedVersion: "999.0"},
+	{requestedVersion: ""},
 }
 
 func TestGetAlertMapper(t *testing.T) {
@@ -46,12 +49,15 @@ func TestGetAlertMapper(t *testing.T) {
 				}
 			}()
 
-			_, err := mapper.GetAlertMapper(testCase.requestedVersion)
+			m, err := mapper.GetAlertMapper(testCase.requestedVersion)
 			if (err != nil) != testCase.hadError {
 				t.Errorf("[%s] expected error=%v, got %v", testCase.requestedVersion, testCase.hadError, err)
 			}
 			if hadPanic != testCase.hadPanic {
 				t.Errorf("[%s] expected panic=%v, got %v", testCase.requestedVersion, testCase.hadPanic, hadPanic)
+			}
+			if m == nil && !testCase.hadError && !testCase.hadPanic {
+				t.Errorf("[%s] got nil mapper", testCase.requestedVersion)
 			}
 		})
 	}
@@ -72,12 +78,15 @@ func TestGetSilenceMapper(t *testing.T) {
 				}
 			}()
 
-			_, err := mapper.GetSilenceMapper(testCase.requestedVersion)
+			m, err := mapper.GetSilenceMapper(testCase.requestedVersion)
 			if (err != nil) != testCase.hadError {
 				t.Errorf("[%s] expected error=%v, got %v", testCase.requestedVersion, testCase.hadError, err)
 			}
 			if hadPanic != testCase.hadPanic {
 				t.Errorf("[%s] expected panic=%v, got %v", testCase.requestedVersion, testCase.hadPanic, hadPanic)
+			}
+			if m == nil && !testCase.hadError && !testCase.hadPanic {
+				t.Errorf("[%s] got nil mapper", testCase.requestedVersion)
 			}
 		})
 	}
@@ -98,12 +107,15 @@ func TestGetStatusMapper(t *testing.T) {
 				}
 			}()
 
-			_, err := mapper.GetStatusMapper(testCase.requestedVersion)
+			m, err := mapper.GetStatusMapper(testCase.requestedVersion)
 			if (err != nil) != testCase.hadError {
 				t.Errorf("[%s] expected error=%v, got %v", testCase.requestedVersion, testCase.hadError, err)
 			}
 			if hadPanic != testCase.hadPanic {
 				t.Errorf("[%s] expected panic=%v, got %v", testCase.requestedVersion, testCase.hadPanic, hadPanic)
+			}
+			if m == nil && !testCase.hadError && !testCase.hadPanic {
+				t.Errorf("[%s] got nil mapper", testCase.requestedVersion)
 			}
 		})
 	}
