@@ -23,14 +23,20 @@ Last-Update: 2020-08-06
  
  # define a recursive wildcard function, we'll need it to find deeply nested
  # sources in the ui directory
---- karma-0.68.orig/ui/Makefile
-+++ karma-0.68/ui/Makefile
-@@ -4,7 +4,7 @@
- rwildcard = $(foreach d, $(wildcard $1*), $(call rwildcard,$d/,$2) $(filter $(subst *,%,$2),$d))
+--- a/ui/Makefile
++++ b/ui/Makefile
+@@ -13,7 +13,7 @@ SHELL        := env PATH=$(PATH) /bin/sh
+ .DEFAULT_GOAL := build/index.html
  
- node_modules/%: package.json package-lock.json
--	npm install
-+	npm install --no-audit
+ $(NODE_INSTALL): package.json package-lock.json
+-	@if [ -e $(NODE_INSTALL) ]; then npm install ; else npm ci; fi
++	@if [ -e $(NODE_INSTALL) ]; then npm install --no-audit ; else npm ci --no-audit; fi
  	touch $@
  
- build/index.html: node_modules/react-scripts/bin/react-scripts.js $(call rwildcard, public src, *)
+ .PHONY: npm-fetch
+@@ -58,4 +58,4 @@ build/stats.json: build
+ .PHONY: npm-upgrade
+ npm-upgrade:
+ 	rm -fr node_modules package-lock.json
+-	npm install
++	npm install --no-audit

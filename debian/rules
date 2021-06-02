@@ -3,6 +3,7 @@
 export DH_VERBOSE=1
 export HOME=/tmp/karma
 export GOPATH=/tmp/karma/go
+export PATH:=/usr/lib/go-1.16/bin:$(PATH)
 
 %:
 	dh $@ --with=systemd
@@ -10,3 +11,5 @@ export GOPATH=/tmp/karma/go
 override_dh_auto_install:
 	install -D -m 755 -o root -g root karma debian/karma/usr/bin/karma
 	install -D -m 644 -o root -g root debian/karma.sysusers debian/karma/usr/lib/sysusers.d/karma.conf
+
+override_dh_auto_test:
